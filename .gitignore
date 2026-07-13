@@ -13,5 +13,9 @@ venv/
 *.log
 state/
 
+# Private note vault (separate private Git repository)
+notes/*
+!notes/.gitkeep
+
 # OS
 .DS_Store
