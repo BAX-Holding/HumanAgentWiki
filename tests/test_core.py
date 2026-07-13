@@ -34,6 +34,17 @@ def test_split_blocks_on_headings():
     assert "Alpha" in headers and "Beta" in headers
 
 
+def test_process_file_splits_long_sections(tmp_path):
+    note = tmp_path / "long.md"
+    note.write_text("---\ntitle: Long note\n---\n## Details\n" + ("dlhy obsah " * 500),
+                    encoding="utf-8")
+
+    chunks = index.process_file(str(note))
+
+    assert len(chunks) > 1
+    assert all(len(chunk["emb_text"]) <= 1800 for chunk in chunks)
+
+
 def test_category_of():
     assert index.category_of(os.path.join("Books", "x.md")) == "Books"
     expected_root_category = os.path.basename(index.NOTES_DIR.rstrip(os.sep)) or "notes"

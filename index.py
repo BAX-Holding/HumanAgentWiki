@@ -44,6 +44,29 @@ if _inc is None:
     _inc = ",".join(_FCFG.get("include_dirs", []))
 INCLUDE_DIRS = [d.strip() for d in _inc.split(",") if d.strip()]
 MIN_CHUNK_CHARS = 25  # skip trivially short blocks (stray lines, empty sections)
+MAX_CHUNK_CHARS = 1400  # stays safely below common 512-token embedding limits
+CHUNK_OVERLAP_CHARS = 180
+
+
+def split_long_text(text, max_chars=MAX_CHUNK_CHARS, overlap=CHUNK_OVERLAP_CHARS):
+    """Split a long section on natural boundaries, retaining a small overlap."""
+    remaining = text.strip()
+    parts = []
+    while len(remaining) > max_chars:
+        floor = max(1, int(max_chars * 0.6))
+        end = max(remaining.rfind(sep, floor, max_chars)
+                  for sep in ("\n\n", "\n", ". ", " "))
+        if end < floor:
+            end = max_chars
+        else:
+            end += 1
+        part = remaining[:end].strip()
+        if part:
+            parts.append(part)
+        remaining = remaining[max(0, end - overlap):].lstrip()
+    if remaining:
+        parts.append(remaining)
+    return parts
 
 
 def parse_frontmatter(text):
@@ -112,15 +135,20 @@ def process_file(path):
     tags = [t.strip().strip('"').strip("'") for t in re.sub(r'[\[\]]', '', fm.get('tags', '')).split(',') if t.strip()]
     out = []
     for header, content in split_blocks(body):
-        full = (header + '\n' + content).strip() if header else content.strip()
-        if len(full) < MIN_CHUNK_CHARS:
-            continue
-        title = header.strip() if header else f_title
-        links = LINK_RE.findall(full)
-        emb_text = f"{f_title} - {title}\n{content}".strip() if title != f_title else full
-        out.append(dict(file=rel, category=category, node_type=node_type, title=title[:200],
-                        links=links, tags=tags, text=full, meta=json.dumps(fm, ensure_ascii=False),
-                        emb_text=emb_text))
+        parts = split_long_text(content) or [""]
+        for part_no, part in enumerate(parts, 1):
+            full = (header + '\n' + part).strip() if header else part.strip()
+            if len(full) < MIN_CHUNK_CHARS:
+                continue
+            base_title = header.strip() if header else f_title
+            title = (f"{base_title} ({part_no}/{len(parts)})"
+                     if len(parts) > 1 else base_title)
+            links = LINK_RE.findall(full)
+            emb_text = (f"{f_title} - {title}\n{part}".strip()
+                        if title != f_title else full)
+            out.append(dict(file=rel, category=category, node_type=node_type, title=title[:200],
+                            links=links, tags=tags, text=full, meta=json.dumps(fm, ensure_ascii=False),
+                            emb_text=emb_text))
     if not out:  # short note (title + a couple of links): still emit one node so it
         text = (f_title + "\n" + body).strip() or f_title   # appears and links to it resolve
         out.append(dict(file=rel, category=category, node_type=node_type, title=f_title[:200],
