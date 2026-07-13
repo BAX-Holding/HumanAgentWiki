@@ -114,8 +114,9 @@ def safe_md_path(rel):
     NOTES_DIR. Rejects absolute paths, non-.md files, and `..` escapes."""
     if os.path.isabs(rel) or not rel.endswith(".md"):
         raise HTTPException(400, "path must be a relative .md file")
-    path = os.path.normpath(os.path.join(NOTES_DIR, rel))
-    if os.path.commonpath([NOTES_DIR, path]) != NOTES_DIR:
+    root = os.path.realpath(NOTES_DIR)
+    path = os.path.realpath(os.path.normpath(os.path.join(root, rel)))
+    if os.path.commonpath([root, path]) != root:
         raise HTTPException(400, "path escapes the notes directory")
     return path
 

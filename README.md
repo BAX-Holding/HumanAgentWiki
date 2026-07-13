@@ -48,7 +48,7 @@ It checks prerequisites, creates a virtualenv, installs dependencies, brings up 
 2. They get chunked and **embedded** — each idea gets a "meaning fingerprint" stored in pgvector.
 3. Search finds things **by meaning, not keywords** — search *"how not to get dumber from AI"* and it finds your note about *"cognitive laziness"* even without those exact words.
 4. **Incremental indexing** — only changed files get re-embedded (seconds, not minutes).
-5. An **MCP server** (`brain_search` / `brain_get` / `brain_neighbors`) lets your agents query it live.
+5. An **MCP server** (`brain_search` / `brain_get` / `brain_neighbors` / `brain_write`) lets your agents query and safely add notes live.
 
 ## Categories - no config files
 

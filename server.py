@@ -3,8 +3,10 @@
 Runs as a local streamable-http service; the embedding model is loaded once and
 kept in memory. Any MCP-compatible agent (Claude, etc.) connects to it.
 
-Tools: brain_search, brain_get, brain_neighbors.
+Tools: brain_search, brain_get, brain_neighbors, brain_write.
 """
+import os
+
 from mcp.server.fastmcp import FastMCP
 from psycopg.rows import dict_row
 
@@ -90,6 +92,29 @@ def brain_neighbors(name: str, k: int = 15) -> dict:
     incoming = [dict(row) for row in cur.fetchall()]
     conn.close()
     return dict(links_to=outgoing, linked_from=incoming)
+
+
+@mcp.tool()
+def brain_write(title: str, content: str, category: str = "Notes", file: str = "",
+                tags: list[str] | None = None, overwrite: bool = False) -> dict:
+    """Create or update one Markdown note and immediately refresh the search index.
+
+    title/content: note contents. category: folder/frontmatter category. file: optional
+    relative .md path for an exact target. Existing notes are protected unless
+    overwrite=true. Absolute paths, path traversal, non-.md files and symlink escapes
+    outside NOTES_DIR are rejected. Returns the saved relative path and whether it was new.
+    """
+    from web import NoteIn, safe_md_path, save_note, slugify
+    clean_category = category.strip() or "Notes"
+    rel = file or os.path.join(clean_category, slugify(title) + ".md")
+    path = safe_md_path(rel)
+    existed = os.path.exists(path)
+    if existed and not overwrite:
+        raise FileExistsError(f"note already exists: {rel}; set overwrite=true to update it")
+    result = save_note(NoteIn(category=clean_category, title=title, text=content,
+                              file=file or None, tags=tags))
+    result["created"] = not existed
+    return result
 
 
 def serve():
