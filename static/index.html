@@ -3,11 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HumanAgentWiki - 3D graph</title>
+  <title>HumanAgentWiki</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>" />
   <style>
-    body { margin: 0; background: #0b0f1a; color: #e5e7eb; font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"; overflow: hidden; }
-    #graph { width: 100vw; height: 100vh; }
+    body { margin: 0; background: #0b0f1a; color: #e5e7eb; font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"; }
     #panel { position: fixed; top: 12px; left: 12px; z-index: 10; width: 264px; background: rgba(15,23,42,.82); border: 1px solid #1e293b; border-radius: 12px; padding: 12px 14px; font-size: 13px; backdrop-filter: blur(6px); }
     #panel h1 { font-size: 14px; margin: 0 0 8px; }
     .searchbox { position: relative; }
@@ -39,13 +38,13 @@
     .leg .x:hover { color: #fca5a5; }
     #legend .ctl { font-size: 11px; color: #64748b; margin: 6px 0 2px; }
     #legend .ctl-link { cursor: pointer; } #legend .ctl-link:hover { color: #cbd5e1; text-decoration: underline; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
     .addcat { display: flex; gap: 5px; margin-top: 8px; }
     .addcat input { flex: 1; min-width: 0; background: #0b0f1a; border: 1px solid #1e293b; border-radius: 7px; color: #e5e7eb; padding: 5px 8px; font-size: 12px; }
     .btn { background: #1e293b; color: #e5e7eb; border: 1px solid #334155; border-radius: 7px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
     .btn.blue { background: #2563eb; border-color: #2563eb; }
     #newnote { width: 100%; margin-top: 8px; }
-    #stats { color: #94a3b8; margin-top: 8px; font-size: 12px; } #fps { color: #475569; }
+    #stats { color: #94a3b8; margin-top: 8px; font-size: 12px; }
     #stats .ctl-link { cursor: pointer; }
     #stats .ctl-link:hover { color: #cbd5e1; text-decoration: underline; }
     #statsmodal { position: fixed; inset: 0; z-index: 70; background: rgba(2,6,23,.72); display: none; align-items: center; justify-content: center; }
@@ -57,16 +56,13 @@
     #statsmodal .grid .sv { color: #e5e7eb; font-weight: 700; }
     #statsmodal .grid .sl { color: #94a3b8; }
     #statsmodal .grid .full { grid-column: 1 / -1; border-top: 1px solid #1e293b; padding-top: 8px; margin-top: 2px; color: #94a3b8; }
-    #lblToggle { display: flex; align-items: center; gap: 7px; margin-top: 8px; font-size: 12px; color: #cbd5e1; cursor: pointer; user-select: none; }
-    #lblToggle input { accent-color: #60a5fa; cursor: pointer; }
-    #maplabels { position: fixed; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; }
     #bootscreen { position: fixed; inset: 0; z-index: 50; background: #0b0f1a; display: flex; flex-direction: column;
                   align-items: center; justify-content: center; gap: 16px; transition: opacity .5s ease; }
     #bootscreen.hide { opacity: 0; pointer-events: none; }
     #bootscreen .logo { font-size: 18px; font-weight: 700; color: #e5e7eb; letter-spacing: .02em; }
     #boot-track { width: 260px; height: 6px; background: #1e293b; border-radius: 99px; overflow: hidden; position: relative; }
     /* Indeterminate sweep — animates on the compositor (transform), so it keeps moving
-       even while the main thread is busy relayouting the graph. */
+       even while the main thread is busy. */
     #boot-fill { position: absolute; top: 0; left: 0; height: 100%; width: 40%; border-radius: 99px;
                  background: linear-gradient(90deg,#60a5fa,#c084fc); will-change: transform;
                  animation: boot-indet 1.1s ease-in-out infinite; }
@@ -86,8 +82,7 @@
     #confirm .btns { display: flex; gap: 10px; justify-content: center; }
     #confirm .btn.danger { background: #dc2626; color: #fff; border-color: #dc2626; font-weight: 600; }
     #confirm .btn.cancel { background: #1e293b; color: #e5e7eb; }
-    .map-label { position: absolute; transform: translate(-50%, -165%); white-space: nowrap; font-size: 11px; font-weight: 600; color: #f1f5f9; text-shadow: 0 1px 3px #000, 0 0 6px #000; pointer-events: none; }
-    #note { position: fixed; top: 0; right: 0; z-index: 20; width: 380px; max-width: 90vw; height: 100vh; background: rgba(15,23,42,.96); border-left: 1px solid #1e293b; padding: 18px 20px; overflow-y: auto; transform: translateX(100%); transition: transform .2s ease; backdrop-filter: blur(8px); box-sizing: border-box; }
+    #note { position: fixed; top: 0; right: 0; z-index: 20; width: 50vw; max-width: 90vw; height: 100vh; background: rgba(15,23,42,.96); border-left: 1px solid #1e293b; padding: 18px 20px; overflow-y: auto; transform: translateX(100%); transition: transform .2s ease; backdrop-filter: blur(8px); box-sizing: border-box; }
     #note.open { transform: translateX(0); }
     #note .close { position: absolute; top: 12px; right: 16px; cursor: pointer; color: #94a3b8; font-size: 20px; border: none; background: none; }
     #note .edit { position: absolute; top: 13px; right: 44px; cursor: pointer; color: #94a3b8; font-size: 16px; border: none; background: none; }
@@ -135,6 +130,19 @@
     #note-backlinks .bl:hover { text-decoration: underline; }
     #ac { position: fixed; background: #0b0f1a; border: 1px solid #334155; border-radius: 7px; max-height: 160px; overflow: auto; display: none; z-index: 30; font-size: 13px; }
     #ac div { padding: 6px 10px; cursor: pointer; } #ac div.sel,#ac div:hover { background: #1e293b; }
+
+    /* --- database-structure tree (replaces the old 3D graph view) --- */
+    #tree { position: fixed; inset: 0; overflow-y: auto; padding: 26px 40px 60px 300px; box-sizing: border-box; }
+    .tcat { margin-bottom: 4px; border-radius: 10px; }
+    .thead { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; border-radius: 8px; font-size: 14px; color: #e5e7eb; user-select: none; }
+    .thead:hover { background: #111827; }
+    .thead .tname { font-weight: 600; }
+    .thead .tcount { color: #64748b; font-size: 12px; }
+    .thead .tarrow { margin-left: auto; color: #64748b; font-size: 11px; }
+    .tbody { padding: 2px 4px 10px 34px; }
+    .tnote { padding: 5px 9px; font-size: 13px; color: #cbd5e1; cursor: pointer; border-radius: 6px; }
+    .tnote:hover { background: #1e293b; }
+    .tempty { padding: 4px 9px; font-size: 12px; color: #475569; font-style: italic; }
   </style>
 </head>
 <body>
@@ -167,11 +175,9 @@
     <div id="results"></div>
     <div id="legend"></div>
     <button class="btn blue" id="newnote" onclick="newNote()">+ New note</button>
-    <label id="lblToggle"><input type="checkbox" id="showLabels" checked /> Show main labels</label>
     <div id="stats">loading...</div>
   </div>
-  <div id="maplabels"></div>
-  <div id="graph"></div>
+  <div id="tree"></div>
   <div id="note">
     <button class="close" onclick="closeNote()">×</button>
     <button class="edit" id="note-edit" title="Edit" onclick="editCurrent()">✎</button>
@@ -183,7 +189,6 @@
   </div>
   <div id="ac"></div>
 
-  <script src="/static/3d-force-graph.min.js"></script>
   <script src="/static/marked.min.js"></script>
   <script>
     const PALETTE = ["#60a5fa","#34d399","#c084fc","#f59e0b","#f472b6","#eab308","#22d3ee","#fb923c","#a78bfa","#4ade80","#f87171","#38bdf8","#facc15","#2dd4bf"];
@@ -198,39 +203,22 @@
         const c = PALETTE[pi % PALETTE.length]; groupColor[g] = c; used.add(c); pi++;
       }});
     }
-    const baseColor = n => groupColor[n.group] || "#94a3b8";
 
-    let Graph, fullData = null, curNote = null, curTag = null, curCat = null, allTags = [], nodeTagCat = {}, editTags = [];
-    let mapLabels = [], labelLayerEl = null, labelsOn = true;
-    // Rebuild the HTML label overlay from the graph's CURRENT node objects. Must run
-    // after every Graph.graphData() swap — otherwise labels keep referencing stale
-    // (frozen) node objects and stick to the wrong screen positions.
-    function rebuildMapLabels(){
-      if(!labelLayerEl || !Graph) return;
-      labelLayerEl.innerHTML = "";
-      const ns = (Graph.graphData().nodes) || [];
-      mapLabels = ns.map(n => {
-        const el = document.createElement("div"); el.className = "map-label";
-        const full = n.label || "";
-        el.textContent = full.length > 28 ? full.slice(0, 28).trimEnd() + "…" : full;
-        el.style.display = "none";
-        labelLayerEl.appendChild(el); return {n, el};
-      });
-    }
-    // --- loading progress (full-screen overlay, used both on boot and on filter change) ---
+    let fullData = null, curNote = null, curTag = null, curCat = null, allTags = [], nodeTagCat = {}, editTags = [];
+    // --- loading progress (full-screen overlay, used on boot) ---
     let booted = false, overlayTimer = null, hideTimer = null, overlayStartedAt = 0;
-    function progSet(pct, txt){                  // bar is indeterminate (CSS); just update the status text
+    function progSet(pct, txt){
       if(txt){ const t = document.getElementById("boot-txt"); if(t) t.textContent = txt; }
     }
-    function overlayShow(txt){                    // re-show the full-screen loader (filter changes)
-      if(!booted) return;                         // initial boot shows it via markup
+    function overlayShow(txt){
+      if(!booted) return;
       const b = document.getElementById("bootscreen"); if(!b) return;
-      clearTimeout(hideTimer); clearTimeout(overlayTimer);   // cancel any pending hide from a previous cycle
+      clearTimeout(hideTimer); clearTimeout(overlayTimer);
       overlayStartedAt = performance.now();
       b.style.display = "flex"; b.classList.remove("hide");
       const t = document.getElementById("boot-txt"); if(t && txt) t.textContent = txt;
     }
-    function overlayHide(){                        // hide loader; also ends the initial boot
+    function overlayHide(){
       const b = document.getElementById("bootscreen"); if(!b){ booted = true; return; }
       const elapsed = performance.now() - overlayStartedAt, MIN = 500;
       if(booted && elapsed < MIN){ clearTimeout(overlayTimer); overlayTimer = setTimeout(overlayHide, MIN - elapsed); return; }
@@ -240,20 +228,10 @@
     }
     const active = new Set(), nodeById = {}, nodeByTitle = {}, nodeBySlug = {};
     const slugify = s => String(s).toLowerCase().replace(/[^a-z0-9-]/g, "");
-    const adj = {}, inc = {};
-    let hlNodes = new Set(), hlLinks = new Set(), pinnedId = null, dragReheated = false, searchSet = new Set();
 
     const LS_KEY = "haw-state-v1";
     const loadState = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch(e){ return {}; } };
     const saveState = p => { try { localStorage.setItem(LS_KEY, JSON.stringify(Object.assign(loadState(), p))); } catch(e){} };
-
-    const RGBA = {};
-    function dim(hex, a){ let c = RGBA[hex]; if(!c){ const m = hex.replace("#",""); c = RGBA[hex] = { r:parseInt(m.slice(0,2),16), g:parseInt(m.slice(2,4),16), b:parseInt(m.slice(4,6),16) }; } return `rgba(${c.r},${c.g},${c.b},${a})`; }
-    function nodeColor(n){ if(hlNodes.size) return hlNodes.has(n.id)?baseColor(n):dim(baseColor(n),0.13); if(searchSet.size) return searchSet.has(n.id)?baseColor(n):dim(baseColor(n),0.10); return baseColor(n); }
-    const LINK_BASE="rgba(148,163,184,0.85)", LINK_FAINT="rgba(148,163,184,0.2)", LINK_HL="rgba(125,211,252,0.95)";
-    function linkColor(l){ if(hlLinks.size) return hlLinks.has(l)?LINK_HL:LINK_BASE; if(searchSet.size) return LINK_FAINT; return LINK_BASE; }
-    function refreshStyles(){ if(!Graph) return; Graph.nodeColor(Graph.nodeColor()).linkColor(Graph.linkColor()).linkDirectionalParticles(Graph.linkDirectionalParticles()); }
-    function setHighlight(n){ hlNodes = new Set(); hlLinks = new Set(); if(n){ hlNodes.add(n.id); (adj[n.id]||[]).forEach(id=>hlNodes.add(id)); (inc[n.id]||[]).forEach(l=>hlLinks.add(l)); } refreshStyles(); }
 
     let editingCats = false;
     function buildLegend(groups){
@@ -284,14 +262,14 @@
       document.getElementById("leg-none").onclick = () => { active.clear(); buildLegend(groups); applyFilter(); saveState({active:[...active], knownGroups: groups}); };
       document.getElementById("leg-edit").onclick = () => { editingCats = !editingCats; buildLegend(legendGroups()); };
     }
-    // change a category colour: pin it, persist, recolour the graph
+    // change a category colour: pin it, persist, recolour legend + tree
     async function changeColor(g, color){
       categoryColors[g] = color; groupColor[g] = color;
-      refreshStyles();
       buildLegend(legendGroups());
+      buildTree();
       await fetch("/api/category-meta", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({name:g, color})}).catch(()=>{});
     }
-    // drag-to-reorder categories in the legend
+    // drag-to-reorder categories in the legend (also reorders the tree)
     let dragSrc = null;
     function wireDrag(d){
       d.addEventListener("dragstart", e => { dragSrc = d.dataset.g; d.classList.add("dragging"); e.dataTransfer.effectAllowed="move"; });
@@ -308,6 +286,7 @@
       reals.splice(to, 0, reals.splice(from,1)[0]);
       categoryOrder = reals;
       buildLegend(legendGroups());
+      buildTree();
       await fetch("/api/category-order", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({order: reals})}).catch(()=>{});
     }
     function confirmDelCat(n){
@@ -315,30 +294,8 @@
         "The category is removed from the legend. The notes/files themselves are kept.",
         () => delCat(n));
     }
-    function doApplyFilter(){
-      const nodes = fullData.nodes.filter(n=>active.has(n.group));
-      const ids = new Set(nodes.map(n=>n.id));
-      const links = fullData.links.filter(l => { const s=(l.source&&l.source.id)||l.source, t=(l.target&&l.target.id)||l.target; return ids.has(s)&&ids.has(t); });
-      Graph.graphData({nodes, links});
-      rebuildMapLabels();
-      document.getElementById("stats").innerHTML = `${nodes.length} nodes · ${links.length} links · <span class="ctl-link" onclick="openStatsModal()">Stats</span><span id="fps"></span>`;
-    }
-    function applyFilter(){
-      if(!fullData||!Graph) return;
-      if(!booted){ doApplyFilter(); return; }          // initial boot: run synchronously
-      overlayShow("Updating view…");
-      // Let the overlay paint and its compositor animation start BEFORE the heavy relayout
-      // blocks the main thread (re-adding a big category) — otherwise the bar never renders.
-      requestAnimationFrame(()=>requestAnimationFrame(()=>{
-        doApplyFilter();
-        // Nodes keep their positions across filters, so the view re-settles visually fast.
-        // Show the animated loader for a fixed, deterministic window rather than waiting for the
-        // simulation to fully cool (~5s) — the graph keeps settling behind once it fades.
-        clearTimeout(overlayTimer); overlayTimer = setTimeout(overlayHide, 1100);
-      }));
-    }
+    function applyFilter(){ buildTree(); }
 
-    function focusNode(n){ if(!n||n.x==null) return; const dist=120, r=1+dist/Math.hypot(n.x,n.y,n.z||1); Graph.cameraPosition({x:n.x*r,y:n.y*r,z:(n.z||1)*r}, n, 800); }
     function esc(s){ return (s||"").replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
     function renderBody(text){
       let h = (window.marked ? marked.parse(text||"", {gfm:true, breaks:true}) : esc(text||""));
@@ -346,7 +303,7 @@
       h = h.replace(/\[\[([^\]]+)\]\]/g, (m,t)=>{ const disp=t.split("|")[0].trim(); return `<span class="wl" onclick="openByTitle('${disp.replace(/'/g,"\\'")}')">${esc(disp)}</span>`; });
       return h;
     }
-    function closeNote(){ document.getElementById("note").classList.remove("open"); pinnedId=null; setHighlight(null); document.getElementById("ac").style.display="none"; }
+    function closeNote(){ document.getElementById("note").classList.remove("open"); document.getElementById("ac").style.display="none"; }
 
     function catOptions(sel){
       const cats = legendGroups().filter(c => c !== "(unresolved)");
@@ -364,10 +321,8 @@
       enterEdit();
     }
     async function openByTitle(t){ const n = nodeByTitle[t] || nodeBySlug[slugify(t)]; if(n) openNote(n.id); else newNote(t); }
-    function openCategory(c){ const node = nodeById["cat:" + c]; if(node){ focusNode(node); pinnedId = node.id; setHighlight(node); } }
     function openCategoryNode(c){
       curNote = null; curTag = null; curCat = c;
-      const node = nodeById["cat:" + c];
       const list = (fullData ? fullData.nodes : []).filter(n => n.group === c
         && !String(n.id).startsWith("cat:") && !String(n.id).startsWith("tag:"))
         .sort((a,b)=>String(a.label).localeCompare(String(b.label)));
@@ -392,7 +347,6 @@
         + '<h3 class="catsec">Notes</h3>' + notesHtml;
       document.getElementById("note-backlinks").innerHTML = "";
       document.getElementById("note").classList.add("open");
-      if(node){ focusNode(node); pinnedId = node.id; setHighlight(node); }
     }
     function enterCatEdit(){
       const c = curCat; if(!c) return;
@@ -434,10 +388,6 @@
         : "No notes.";
       document.getElementById("note-backlinks").innerHTML = "";
       document.getElementById("note").classList.add("open");
-      // highlight only the notes carrying this tag (dim the rest), like search
-      searchSet = new Set(list.map(b => b.id));
-      refreshStyles();
-      document.getElementById("search-clear").style.display = "inline";
     }
     async function refreshNodeTags(){
       const nt = await fetch("/api/node-tags").then(r=>r.json()).catch(()=>[]);
@@ -482,7 +432,7 @@
       buildLegend(legendGroups()); applyFilter(); saveState({active:[...active], knownGroups: legendGroups()});
       openTag(name);
     }
-    async function openNote(id, focus=true){
+    async function openNote(id){
       try {
         if(String(id).startsWith("ext:")){ newNote(String(id).slice(4)); return; }
         const n = await fetch("/api/note?file="+encodeURIComponent(id)).then(r=>r.json());
@@ -496,14 +446,13 @@
             return `<span class="tag${nd?' tag-node':''}" onclick="openTag('${String(t).replace(/'/g,"\\'")}')">🏷 ${esc(t)}</span>`;
           }).join("");
         const _c = n.category || "";
-        document.getElementById("note-meta").innerHTML = (_c ? `<span class="metacat" onclick="openCategory('${_c.replace(/'/g,"\\'")}')">${esc(_c)}</span> - ` : "") + esc(n.id);
+        document.getElementById("note-meta").innerHTML = (_c ? `<span class="metacat" onclick="openCategoryNode('${_c.replace(/'/g,"\\'")}')">${esc(_c)}</span> - ` : "") + esc(n.id);
         document.getElementById("note-body").innerHTML = renderBody(n.body);
         const bl = n.backlinks || [];
         document.getElementById("note-backlinks").innerHTML = bl.length
           ? "<h3>↩ Linked from ("+bl.length+")</h3>" + bl.map(b=>`<span class="bl" onclick="openNote('${b.id.replace(/'/g,"\\'")}')">${esc(b.label)}</span>`).join("")
           : "";
         document.getElementById("note").classList.add("open");
-        if(nodeById[id]){ if(focus) focusNode(nodeById[id]); pinnedId=id; setHighlight(nodeById[id]); }
       } catch(e){}
     }
     function enterEdit(){
@@ -524,7 +473,7 @@
       document.getElementById("note-title").textContent = curNote.id ? "Edit note" : "New note";
       editTags = (curNote.tags || []).slice(); wireTagEditor();
       const ta = document.getElementById("edit-area"); wireAutocomplete(ta);
-      document.getElementById("edit-cancel").onclick = () => curNote.id ? openNote(curNote.id, false) : closeNote();
+      document.getElementById("edit-cancel").onclick = () => curNote.id ? openNote(curNote.id) : closeNote();
       document.getElementById("edit-save").onclick = saveEdit;
       if(curNote.id){ document.getElementById("edit-delete").onclick = () => showConfirm(
         "Delete note “" + (curNote.title||curNote.id) + "”?",
@@ -576,7 +525,7 @@
         const r = await fetch("/api/note", { method:"POST", headers:{"Content-Type":"application/json"},
           body: JSON.stringify({ category: document.getElementById("edit-cat").value, title,
             text: document.getElementById("edit-area").value, file: curNote.id || null, tags: editTags }) }).then(r=>r.json());
-        if(r.ok){ document.getElementById("note-backlinks").style.display=""; await reloadGraph(); await openNote(r.file, false); }
+        if(r.ok){ document.getElementById("note-backlinks").style.display=""; await reloadGraph(); await openNote(r.file); }
         else st.textContent = "error: " + (r.detail||"not saved");
       } catch(e){ st.textContent = "error: " + e.message; }
     }
@@ -595,7 +544,7 @@
       await fetch("/api/categories",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:n})});
       document.getElementById("newcat").value=""; await loadCats(); active.add(n); assignColors([...new Set([...legendGroups(),n])]); buildLegend(legendGroups()); applyFilter(); }
     async function delCat(n){   // confirmation handled by confirmDelCat's modal
-      await fetch("/api/categories/"+encodeURIComponent(n),{method:"DELETE"}); await loadCats(); buildLegend(legendGroups()); }
+      await fetch("/api/categories/"+encodeURIComponent(n),{method:"DELETE"}); await loadCats(); buildLegend(legendGroups()); applyFilter(); }
     // big, explicit confirmation modal
     function showConfirm(title, msg, onYes){
       let m = document.getElementById("confirm");
@@ -625,9 +574,6 @@
       const q = document.getElementById("search").value.trim().toLowerCase();
       const box = document.getElementById("results");
       document.getElementById("search-clear").style.display = q ? "inline" : "none";
-      searchSet = new Set();
-      if(q.length>=2) for(const n of Object.values(nodeById)) if((n.label||"").toLowerCase().includes(q) || (n.tags||[]).some(t=>String(t).toLowerCase().includes(q))) searchSet.add(n.id);
-      refreshStyles();
       if(!q){ box.innerHTML=""; return; }
       const q1 = s => String(s).replace(/'/g,"\\'");
       // 📁 categories
@@ -670,7 +616,7 @@
     });
     function acPick(i){ const ta=acTA, pos=ta.selectionStart; ta.value = ta.value.slice(0,pos).replace(/\[\[([^\]]*)$/,"[["+acItems[i]+"]]")+ta.value.slice(pos); document.getElementById("ac").style.display="none"; ta.focus(); }
 
-    async function reloadGraph(){ const data = await fetch("/api/graph").then(r=>r.json()); ingest(data); Graph.graphData({nodes: data.nodes.filter(n=>active.has(n.group)), links: data.links.filter(l=>{const s=(l.source&&l.source.id)||l.source,t=(l.target&&l.target.id)||l.target; const ids=new Set(data.nodes.filter(n=>active.has(n.group)).map(n=>n.id)); return ids.has(s)&&ids.has(t);})}); rebuildMapLabels(); buildLegend(legendGroups()); }
+    async function reloadGraph(){ const data = await fetch("/api/graph").then(r=>r.json()); ingest(data); buildTree(); buildLegend(legendGroups()); }
     async function openStatsModal(){
       const m = document.getElementById("statsmodal"); if(!m) return;
       const grid = m.querySelector(".grid"); grid.innerHTML = '<div class="full">Loading…</div>';
@@ -696,23 +642,45 @@
       for(const k in nodeById) delete nodeById[k]; for(const k in nodeByTitle) delete nodeByTitle[k]; for(const k in nodeBySlug) delete nodeBySlug[k];
       data.nodes.forEach(n=>{ nodeById[n.id]=n; nodeByTitle[n.label]=n;
         if(!String(n.id).startsWith("cat:") && !String(n.id).startsWith("ext:")) nodeBySlug[slugify(String(n.id).split("/").pop().replace(/\.md$/,""))]=n; });
-      for(const k in adj) delete adj[k]; for(const k in inc) delete inc[k];
-      data.links.forEach(l=>{ const s=(l.source&&l.source.id)||l.source, t=(l.target&&l.target.id)||l.target;
-        (adj[s]=adj[s]||new Set()).add(t); (adj[t]=adj[t]||new Set()).add(s); (inc[s]=inc[s]||[]).push(l); (inc[t]=inc[t]||[]).push(l); });
       assignColors(legendGroups());
     }
+
+    // ---- database-structure tree: Category -> Notes, replaces the old 3D graph ----
+    function updateStats(){
+      const groups = legendGroups().filter(g => g !== "(unresolved)" && active.has(g));
+      const notes = (fullData ? fullData.nodes : []).filter(n => groups.includes(n.group)
+        && !String(n.id).startsWith("cat:") && !String(n.id).startsWith("tag:"));
+      document.getElementById("stats").innerHTML = `${notes.length} notes · ${groups.length} categories · <span class="ctl-link" onclick="openStatsModal()">Stats</span>`;
+    }
+    function buildTree(){
+      const el = document.getElementById("tree"); if(!el || !fullData) return;
+      const collapsed = loadState().collapsed || {};
+      const groups = legendGroups().filter(g => g !== "(unresolved)" && active.has(g));
+      const q1 = s => String(s).replace(/'/g,"\\'");
+      el.innerHTML = groups.map(g => {
+        const list = fullData.nodes.filter(n => n.group === g && !String(n.id).startsWith("cat:") && !String(n.id).startsWith("tag:"))
+          .sort((a,b)=>String(a.label).localeCompare(String(b.label)));
+        const open = !collapsed[g];
+        return `<div class="tcat">
+          <div class="thead" onclick="toggleCat('${q1(g)}')"><span class="dot" style="background:${groupColor[g]||'#94a3b8'}"></span><span class="tname">${esc(g)}</span><span class="tcount">${list.length}</span><span class="tarrow">${open?'▾':'▸'}</span></div>
+          <div class="tbody" style="${open?'':'display:none'}">${list.length ? list.map(n=>`<div class="tnote" onclick="openNote('${q1(n.id)}')">${esc(n.label)}</div>`).join("") : '<div class="tempty">No notes</div>'}</div>
+        </div>`;
+      }).join("");
+      updateStats();
+    }
+    function toggleCat(g){ const st = loadState(); const c = st.collapsed || {}; c[g] = !c[g]; saveState({collapsed:c}); buildTree(); }
 
     (async () => {
       progSet(8, "Loading categories…");
       { const cfg = await fetch("/api/config").then(r=>r.json()).catch(()=>({}));
         categoryColors = cfg.categoryColors || {}; categoryOrder = cfg.categoryOrder || []; }
       await loadCats();
-      progSet(24, "Loading tags…");
+      progSet(30, "Loading tags…");
       allTags = await fetch("/api/tags").then(r=>r.json()).catch(()=>[]);
       await refreshNodeTags();
-      progSet(45, "Loading graph…");
+      progSet(55, "Loading notes…");
       const data = await fetch("/api/graph").then(r=>r.json());
-      progSet(62, "Building graph…");
+      progSet(80, "Building view…");
       ingest(data);
       const groups = legendGroups();
       const saved = loadState();
@@ -721,68 +689,8 @@
       groups.forEach(g => { if(!sa || sa.has(g) || !known.has(g)) active.add(g); });   // new groups default on
       saveState({active:[...active], knownGroups: groups});
       buildLegend(groups);
-
-      Graph = ForceGraph3D()(document.getElementById("graph"))
-        .graphData(data)
-        .warmupTicks(300).d3AlphaDecay(0.0228).d3AlphaMin(0.001)
-        .backgroundColor("#0b0f1a")
-        .nodeLabel(n => n.label)
-        .nodeColor(nodeColor).nodeVal(n=>n.val).nodeOpacity(0.95)
-        .linkColor(linkColor).linkWidth(0)
-        .linkDirectionalParticles(l => hlLinks.size ? (hlLinks.has(l) ? 3 : 0) : 1).linkDirectionalParticleWidth(1.4)
-        .onNodeHover(n=>{ document.getElementById("graph").style.cursor = n?"pointer":""; })
-        .onNodeClick(n=>{ const id=String(n.id); if(id.startsWith("cat:")) openCategoryNode(n.label); else if(id.startsWith("tag:")) openTag(n.label); else openNote(n.id, false); })
-        .onBackgroundClick(()=>{
-          pinnedId=null; curNote=null; curTag=null; curCat=null;
-          const s=document.getElementById("search"); s.value="";
-          searchSet=new Set();
-          document.getElementById("search-clear").style.display="none";
-          document.getElementById("results").innerHTML="";
-          closeNote(); refreshStyles();
-        })
-        .onNodeDrag(()=>{ if(!dragReheated){ dragReheated=true; Graph.d3ReheatSimulation(); } })
-        .onNodeDragEnd(n=>{ dragReheated=false; n.fx=n.fy=n.fz=undefined; });
-      Graph.d3Force("charge").strength(-60);
-      progSet(80, "Rendering…");
-      applyFilter();
-
-      // map labels for big nodes (hubs); every node gets a hidden label and by default
-      // only Level 2/3 (val>=16: categories and node-tags) show; while searching we show
-      // a label on every matched node. Built from current graph nodes, rebuilt on reload.
-      labelLayerEl = document.getElementById("maplabels");
-      rebuildMapLabels();
-      labelsOn = (saved.labels!==false);
-      let frames=0, lastFps=performance.now();
-      function updateLabels(){
-        if(!labelsOn) return; frames++;
-        const now=performance.now(); if(now-lastFps>1000){ const el=document.getElementById("fps"); if(el) el.textContent=" · "+Math.round(frames*1000/(now-lastFps))+" fps"; frames=0; lastFps=now; }
-        const cam=Graph.camera(), V3=cam.position.constructor, fwd=cam.getWorldDirection(new V3());
-        const searching = searchSet.size > 0;
-        for(const {n,el} of mapLabels){
-          const want = searching ? searchSet.has(n.id) : ((n.val || 0) >= 16);
-          if(!want || !active.has(n.group) || n.x==null){ el.style.display="none"; continue; }
-          const dx=n.x-cam.position.x, dy=n.y-cam.position.y, dz=(n.z||0)-cam.position.z;
-          if(dx*fwd.x+dy*fwd.y+dz*fwd.z<=0){ el.style.display="none"; continue; }   // behind camera
-          const dist=Math.hypot(dx,dy,dz);
-          if(!searching){ const maxDist=n.val>=54?4200:1700; if(dist>maxDist){ el.style.display="none"; continue; } }
-          const c=Graph.graph2ScreenCoords(n.x,n.y,n.z||0);
-          el.style.display=""; el.style.fontSize=Math.max(9,Math.min(13,15-dist/400))+"px"; el.style.left=c.x+"px"; el.style.top=c.y+"px";
-        }
-        requestAnimationFrame(updateLabels);
-      }
-      const cb=document.getElementById("showLabels");
-      cb.checked=labelsOn; cb.addEventListener("change", e=>{ labelsOn=e.target.checked; saveState({labels:labelsOn}); if(labelsOn) updateLabels(); else mapLabels.forEach(({el})=>el.style.display="none"); });
-      if(labelsOn) updateLabels();
-
-      setTimeout(overlayHide, 600);   // let the layout settle a moment before revealing
-      // After the initial (nicely warmed) layout, drop synchronous warmup so later filter
-      // re-layouts don't block the main thread — the loader animation then stays smooth and
-      // the graph settles over rendered frames instead of one big freeze.
-      setTimeout(()=>{ if(Graph) Graph.warmupTicks(0); }, 1300);
-
-      // camera persistence
-      if(saved.cam) setTimeout(()=>{ try{ Graph.cameraPosition({x:saved.cam.x,y:saved.cam.y,z:saved.cam.z},{x:saved.cam.tx,y:saved.cam.ty,z:saved.cam.tz},0);}catch(e){} }, 80);
-      setInterval(()=>{ if(!Graph) return; const p=Graph.cameraPosition(); const c=Graph.controls&&Graph.controls(); const t=(c&&c.target)||{x:0,y:0,z:0}; saveState({cam:{x:p.x,y:p.y,z:p.z,tx:t.x,ty:t.y,tz:t.z}}); }, 1500);
+      buildTree();
+      setTimeout(overlayHide, 300);
     })().catch(e => {
       document.getElementById("stats").textContent = "error: " + e.message;
       progSet(100, "Error: " + e.message);
