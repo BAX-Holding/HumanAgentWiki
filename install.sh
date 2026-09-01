@@ -10,6 +10,9 @@ set -euo pipefail
 REPO="${HAW_REPO:-https://github.com/petrludwig-collab/HumanAgentWiki.git}"
 DIR="${HAW_DIR:-$HOME/humanagentwiki}"
 DB="${HAW_DB:-humanagentwiki}"
+# Some shells (cron, minimal CI, non-login) don't export USER; without this, `set -u` aborts
+# with a cryptic "USER: unbound variable" right on the DB-role path before any helpful message.
+USER="${USER:-$(id -un)}"
 
 if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; C=$'\033[36m'; X=$'\033[0m'
 else B=; G=; Y=; R=; C=; X=; fi
@@ -217,7 +220,19 @@ PY
     warn "embedding dimension changed ($CUR_DIM -> ${EMBED_DIM}) - recreating schema"
     .venv/bin/python -c "import os,psycopg;c=psycopg.connect(os.environ['DATABASE_URL']);cur=c.cursor();cur.execute('DROP TABLE IF EXISTS chunks CASCADE');cur.execute('DROP TABLE IF EXISTS files CASCADE');c.commit()" 2>/dev/null || true
   fi
-  .venv/bin/python cli.py init-db && ok "schema ready"
+  if .venv/bin/python cli.py init-db; then
+    ok "schema ready"
+  else
+    die "Database schema failed — the pgvector 'vector' extension is not available.
+       This install cannot work without it, so stopping here instead of finishing 'green'.
+       Fix it one of these ways, then re-run ./install.sh:
+         - Ubuntu/Debian: install pgvector from the official PGDG apt repo
+           (https://wiki.postgresql.org/wiki/Apt), i.e. the postgresql-<ver>-pgvector package;
+         - or install Docker and re-run — this script then uses the bundled pgvector image."
+  fi
+else
+  die "No reachable PostgreSQL — cannot create the schema.
+       Install PostgreSQL + pgvector (or Docker) and re-run ./install.sh."
 fi
 
 # 7) notes folder (empty, or seeded with bundled examples) ------------------

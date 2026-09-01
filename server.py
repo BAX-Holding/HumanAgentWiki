@@ -6,15 +6,35 @@ kept in memory. Any MCP-compatible agent (Claude, etc.) connects to it.
 Tools: brain_search, brain_get, brain_neighbors, brain_write.
 """
 import os
-
-from mcp.server.fastmcp import FastMCP
 from psycopg.rows import dict_row
 
-from common import connect, embed, MCP_HOST, MCP_PORT
+from common import connect, embed, MCP_HOST, MCP_PORT, NOTES_DIR
+import index
 
-mcp = FastMCP("humanagentwiki", host=MCP_HOST, port=MCP_PORT)
+# FastMCP needs the `mcp` package < 2.0 (mcp 2.x removed `mcp.server.fastmcp`) on python >= 3.10.
+# When it is unavailable — mcp 2.x already installed, or no mcp on a python 3.9 interpreter — fall
+# back to a no-op so the web / search side keeps working and only serve() reports a clear error.
+# requirements.txt pins mcp<2 so a normal install never hits this; the guard just protects a
+# pre-existing environment from a hard crash on import.
+try:
+    from mcp.server.fastmcp import FastMCP
+    mcp = FastMCP("humanagentwiki", host=MCP_HOST, port=MCP_PORT)
+    _HAS_MCP = True
+except ImportError:
+    _HAS_MCP = False
 
-COLS = "id, file, category, node_type, title, links, text"
+    class _NoMCP:
+        """Stand-in when FastMCP is unavailable: tool() is a transparent decorator, run() explains."""
+        def tool(self, *a, **k):
+            return lambda fn: fn
+
+        def run(self, *a, **k):
+            raise SystemExit("The MCP server needs the 'mcp' package >=1.2,<2 on python >=3.10.\n"
+                             "Install it with:  pip install 'mcp>=1.2,<2'")
+
+    mcp = _NoMCP()
+
+COLS = "id, file, category, node_type, title, links, text, updated_at"
 
 
 def _filters(category, node_type):
@@ -26,10 +46,16 @@ def _filters(category, node_type):
     return (" AND " + " AND ".join(clauses)) if clauses else "", params
 
 
+def _iso_date(value):
+    """A note's last-changed date as YYYY-MM-DD, so an agent can judge staleness."""
+    return value.date().isoformat() if value is not None else None
+
+
 def _hit(row):
     text = row["text"]
     return dict(id=row["id"], file=row["file"], category=row["category"],
                 node_type=row["node_type"], title=row["title"], links=row["links"],
+                updated=_iso_date(row.get("updated_at")),
                 snippet=text[:400] + ("..." if len(text) > 400 else ""))
 
 
@@ -64,18 +90,24 @@ def search(query, k=8, category="", node_type=""):
 def brain_search(query: str, k: int = 8, category: str = "", node_type: str = "") -> list:
     """Hybrid semantic + keyword search over the notes.
     query: search text (any language). k: number of results.
-    category / node_type: optional filters. Returns ranked notes with a snippet."""
+    category / node_type: optional filters. Returns ranked notes with a snippet and
+    `updated` (YYYY-MM-DD, the note's last-changed date) so you can spot stale information."""
     return search(query, k, category, node_type)
 
 
 @mcp.tool()
 def brain_get(title_or_file: str) -> list:
-    """Return the full text of notes by exact title or file path."""
+    """Return the full text of notes by exact title or file path.
+    Each note includes `updated` (YYYY-MM-DD, its last-changed date) so you can judge staleness."""
     conn = connect()
     cur = conn.cursor(row_factory=dict_row)
-    cur.execute("SELECT file, category, node_type, title, links, text FROM chunks "
+    cur.execute("SELECT file, category, node_type, title, links, text, updated_at FROM chunks "
                 "WHERE title = %s OR file = %s LIMIT 25", (title_or_file, title_or_file))
-    out = [dict(row) for row in cur.fetchall()]
+    out = []
+    for row in cur.fetchall():
+        d = dict(row)
+        d["updated"] = _iso_date(d.pop("updated_at", None))
+        out.append(d)
     conn.close()
     return out
 
@@ -96,7 +128,7 @@ def brain_neighbors(name: str, k: int = 15) -> dict:
 
 @mcp.tool()
 def brain_write(title: str, content: str, category: str = "Notes", file: str = "",
-                tags: list[str] | None = None, overwrite: bool = False) -> dict:
+                tags: list = None, overwrite: bool = False) -> dict:
     """Create or update one Markdown note and immediately refresh the search index.
 
     title/content: note contents. category: folder/frontmatter category. file: optional
