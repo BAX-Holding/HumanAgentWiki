@@ -13,6 +13,7 @@ import re
 import json
 import subprocess
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
@@ -101,6 +102,7 @@ def ensure_setup():
     conn.execute("CREATE TABLE IF NOT EXISTS category_meta "
                  "(name text PRIMARY KEY, color text, sort_order double precision, "
                  " updated_at timestamptz DEFAULT now())")
+
     conn.close()
 
 
@@ -170,7 +172,7 @@ def stats():
 
 class CategoryMeta(BaseModel):
     name: str
-    color: str | None = None
+    color: Optional[str] = None
 
 
 @app.post("/api/category-meta")
@@ -181,6 +183,7 @@ def set_category_meta(m: CategoryMeta):
                  (m.name.strip(), m.color))
     conn.close()
     return {"ok": True}
+
 
 
 class CategoryOrder(BaseModel):
@@ -306,8 +309,8 @@ class NoteIn(BaseModel):
     category: str
     title: str
     text: str
-    file: str | None = None
-    tags: list[str] | None = None
+    file: Optional[str] = None
+    tags: Optional[list[str]] = None
 
 
 @app.post("/api/note")
@@ -420,6 +423,7 @@ def graph():
     links_by_file = {r["file"]: r["links"] for r in cur.fetchall()}
     cur.execute("SELECT tag, category FROM node_tags")
     node_tag_cats = {r["tag"]: r["category"] for r in cur.fetchall()}
+
     conn.close()
     title_to_file = {r["title"]: r["file"] for r in base}
 
@@ -433,20 +437,36 @@ def graph():
     nodes = {r["file"]: {"id": r["file"], "label": r["title"], "group": r["category"],
                          "tags": r["tags"] or [], "val": 16 if r["node_type"] == "hub" else 0.7}
              for r in base}
-    # categories are nodes too: one hub per category; every note links to it.
+    # categories are nodes too. If a note is titled EXACTLY like a category (a hub note for it),
+    # that note BECOMES the category node — one "Books"/"Projects"/… node instead of a separate
+    # cat: node. A note with any other title stays its own node and never hijacks the category.
     cats = sorted({r["category"] for r in base})
+
+    def cat_node(c):
+        return title_to_file.get(c) or ("cat:" + c)
+
     for c in cats:
-        nodes["cat:" + c] = {"id": "cat:" + c, "label": c, "group": c, "val": 54, "is_cat": True}
-    # A wikilink to a category (its label, its raw folder name, or a slug of either) should
-    # point at that category node — not spawn a duplicate empty node. e.g. [[longevity]] -> cat:Longevity.
+        cn = cat_node(c)
+        if cn.startswith("cat:"):
+            nodes[cn] = {"id": cn, "label": c, "group": c, "val": 54, "is_cat": True}
+        elif cn in nodes:
+            nodes[cn]["val"] = 54            # a hub note titled like the category serves as its node
+            nodes[cn]["is_cat"] = True
+    # A wikilink to a category (its label, its raw folder name, or a slug of either) should point
+    # at that category node (the hub note or the synthetic cat:) — not spawn a duplicate empty node.
     cat_key = {}
     for c in cats:
-        cat_key[c] = "cat:" + c; cat_key[slug(c)] = "cat:" + c
+        cat_key[c] = cat_node(c); cat_key[slug(c)] = cat_node(c)
     for raw, label in getattr(index, "CATEGORY_LABELS", {}).items():
-        if "cat:" + label in nodes:
+        cn = cat_node(label)
+        if cn in nodes:
             for k in (raw, label, slug(raw), slug(label)):
-                cat_key[k] = "cat:" + label
-    links = [{"source": r["file"], "target": "cat:" + r["category"]} for r in base]
+                cat_key[k] = cn
+    links = []
+    for r in base:
+        cn = cat_node(r["category"])
+        if r["file"] != cn:                  # don't link a hub note to itself
+            links.append({"source": r["file"], "target": cn})
     for src, targets in links_by_file.items():
         for t in targets:
             dst = title_to_file.get(t) or slug_to_file.get(slug(t)) or cat_key.get(t) or cat_key.get(slug(t))
@@ -468,6 +488,7 @@ def graph():
             if tagname in (r["tags"] or []):
                 links.append({"source": r["file"], "target": target})
     # sizes: category node = 54 (largest), HUB_TAG/hub note = 16 (medium), everything else = 2.
+
     return {"nodes": list(nodes.values()), "links": links}
 
 
@@ -510,7 +531,7 @@ def node_tags_list():
 
 class TagIn(BaseModel):
     tag: str
-    category: str | None = None
+    category: Optional[str] = None
 
 
 @app.post("/api/node-tags")
