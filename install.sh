@@ -146,14 +146,48 @@ elif command -v apt-get >/dev/null; then
   sudo apt-get update -qq >/dev/null 2>&1 || true
   sudo apt-get install -y postgresql postgresql-contrib >/dev/null 2>&1 || warn "postgres install hit an issue"
   PGMAJ="$(ls /usr/lib/postgresql/ 2>/dev/null | sort -n | tail -1)"
-  sudo apt-get install -y "postgresql-${PGMAJ}-pgvector" >/dev/null 2>&1 \
-    || sudo apt-get install -y postgresql-pgvector >/dev/null 2>&1 \
-    || warn "pgvector apt package not found - schema may fail (alternative: install Docker and re-run)"
+  :   # pgvector is handled below, for every native install - not only fresh ones
   sudo systemctl enable --now postgresql >/dev/null 2>&1 || true
   ok "PostgreSQL installed"
 else
   warn "No PostgreSQL, Docker, or apt - install PostgreSQL+pgvector manually, then re-run."
 fi
+# pgvector, for every native install - not just the one that installed Postgres itself.
+# This used to live inside the "no PostgreSQL found" branch, so anyone who already had
+# Postgres running (including anyone re-running after a failure) skipped it entirely and hit
+# "could not open extension control file .../vector.control" at the schema step.
+if [ "$DB_URL" = "dbname=$DB" ] && command -v apt-get >/dev/null; then
+  PGMAJ="$(ls /usr/lib/postgresql/ 2>/dev/null | sort -n | tail -1)"
+  if ! ls /usr/share/postgresql/*/extension/vector.control >/dev/null 2>&1; then
+    warn "pgvector extension missing - installing it"
+    install_pgvector() {
+      sudo apt-get install -y "postgresql-${PGMAJ}-pgvector" >/dev/null 2>&1 \
+        || sudo apt-get install -y postgresql-pgvector >/dev/null 2>&1
+    }
+    # Ubuntu only started shipping pgvector with 24.04, so on 22.04 - still the most common
+    # server image - neither package exists. The extension IS published for every supported
+    # release in PostgreSQL's own apt repository, so add that rather than sending people off
+    # to install Docker.
+    if ! install_pgvector; then
+      warn "not in the distro repos - adding PostgreSQL's official apt repository"
+      CODENAME="$(lsb_release -cs 2>/dev/null || { . /etc/os-release 2>/dev/null; echo "${VERSION_CODENAME:-}"; })"
+      if [ -n "$CODENAME" ]; then
+        sudo install -d /usr/share/postgresql-common/pgdg 2>/dev/null || true
+        sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+          https://www.postgresql.org/media/keys/ACCC4CF8.asc >/dev/null 2>&1 || true
+        echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${CODENAME}-pgdg main" \
+          | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null 2>&1 || true
+        sudo apt-get update -qq >/dev/null 2>&1 || true
+      fi
+      install_pgvector || warn "pgvector still unavailable (alternative: install Docker and re-run)"
+    fi
+    ls /usr/share/postgresql/*/extension/vector.control >/dev/null 2>&1 \
+      && ok "pgvector available" || warn "pgvector still missing - the schema step will fail"
+  else
+    ok "pgvector already available"
+  fi
+fi
+
 # For a local/native Postgres: give this OS user a role + the database (peer auth on the socket).
 if pg_ready && [ "$DB_URL" = "dbname=$DB" ]; then
   sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$USER'" 2>/dev/null | grep -q 1 \
