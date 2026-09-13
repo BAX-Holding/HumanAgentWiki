@@ -659,13 +659,32 @@
       const collapsed = loadState().collapsed || {};
       const groups = legendGroups().filter(g => g !== "(unresolved)" && active.has(g));
       const q1 = s => String(s).replace(/'/g,"\\'");
+      const noteRow = n => `<div class="tnote" onclick="openNote('${q1(n.id)}')">${esc(n.label)}</div>`;
       el.innerHTML = groups.map(g => {
-        const list = fullData.nodes.filter(n => n.group === g && !String(n.id).startsWith("cat:") && !String(n.id).startsWith("tag:"))
-          .sort((a,b)=>String(a.label).localeCompare(String(b.label)));
+        const list = fullData.nodes.filter(n => n.group === g && !String(n.id).startsWith("cat:") && !String(n.id).startsWith("tag:"));
         const open = !collapsed[g];
+        // Files stored as Category/Subfolder/.../file.md carry that structure into the tree too
+        // (e.g. Sessions/Claudia/, Assets/HVAC/) instead of flattening every note into one
+        // alphabetical list per category — only the first path segment becomes a sub-group.
+        const roots = [], subs = {};
+        for(const n of list){
+          const parts = String(n.id).split("/");
+          if(parts.length > 2){ (subs[parts[1]] = subs[parts[1]] || []).push(n); }
+          else { roots.push(n); }
+        }
+        roots.sort((a,b)=>String(a.label).localeCompare(String(b.label)));
+        const subKey = sn => g + "/" + sn;
+        const subHtml = Object.keys(subs).sort((a,b)=>a.localeCompare(b)).map(sn => {
+          const items = subs[sn].sort((a,b)=>String(a.label).localeCompare(String(b.label)));
+          const sOpen = !collapsed[subKey(sn)];
+          return `<div class="tsub">
+            <div class="thead" style="padding:7px 10px" onclick="toggleCat('${q1(subKey(sn))}')"><span class="tname">${esc(sn)}</span><span class="tcount">${items.length}</span><span class="tarrow">${sOpen?'▾':'▸'}</span></div>
+            <div class="tbody" style="${sOpen?'':'display:none'}">${items.map(noteRow).join("")}</div>
+          </div>`;
+        }).join("");
         return `<div class="tcat">
           <div class="thead" onclick="toggleCat('${q1(g)}')"><span class="dot" style="background:${groupColor[g]||'#94a3b8'}"></span><span class="tname">${esc(g)}</span><span class="tcount">${list.length}</span><span class="tarrow">${open?'▾':'▸'}</span></div>
-          <div class="tbody" style="${open?'':'display:none'}">${list.length ? list.map(n=>`<div class="tnote" onclick="openNote('${q1(n.id)}')">${esc(n.label)}</div>`).join("") : '<div class="tempty">No notes</div>'}</div>
+          <div class="tbody" style="${open?'':'display:none'}">${list.length ? roots.map(noteRow).join("") + subHtml : '<div class="tempty">No notes</div>'}</div>
         </div>`;
       }).join("");
       updateStats();

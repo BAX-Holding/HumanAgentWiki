@@ -469,7 +469,12 @@ def graph():
             links.append({"source": r["file"], "target": cn})
     for src, targets in links_by_file.items():
         for t in targets:
-            dst = title_to_file.get(t) or slug_to_file.get(slug(t)) or cat_key.get(t) or cat_key.get(slug(t))
+            # A [[Category/subfolder/file-slug]] link (path-style, not by title) has a "/" in
+            # slug(t), which never matches slug_to_file (keyed by bare filename) — fall back to
+            # just the last path segment.
+            dst = (title_to_file.get(t) or slug_to_file.get(slug(t))
+                   or slug_to_file.get(slug(t.rsplit("/", 1)[-1]))
+                   or cat_key.get(t) or cat_key.get(slug(t)))
             if dst is None:                       # link to a note that doesn't exist (yet)
                 dst = "ext:" + t
                 nodes.setdefault(dst, {"id": dst, "label": t, "group": "(unresolved)", "val": 0.7})

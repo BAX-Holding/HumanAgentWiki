@@ -126,11 +126,17 @@ def process_file(path):
     node_type = 'hub' if fm.get('type') == 'hub' else 'note'
     tags = [t.strip().strip('"').strip("'") for t in re.sub(r'[\[\]]', '', fm.get('tags', '')).split(',') if t.strip()]
     out = []
+    first_chunk = True
     for header, content in split_blocks(body):
         full = (header + '\n' + content).strip() if header else content.strip()
         if len(full) < MIN_CHUNK_CHARS:
             continue
-        title = header.strip() if header else f_title
+        # The note's own title always wins for its first chunk, even when the body
+        # starts straight with a `##` heading (e.g. the CLAUDE.md session-note template) —
+        # otherwise the tree/graph shows that heading text ("Stav", "Téma"...) as the note's
+        # label instead of its real title.
+        title = f_title if first_chunk else (header.strip() if header else f_title)
+        first_chunk = False
         links = link_targets(full)
         emb_prefix = f"{f_title} - {title}\n" if title != f_title else ""
         emb_body = content if emb_prefix else full
