@@ -4,7 +4,8 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/petrludwig-collab/HumanAgentWiki/main/install.sh | bash
 #
-# Overridable via env: HAW_DIR (install path), HAW_REPO (git url), HAW_DB (db name).
+# Overridable via env: HAW_DIR (install path), HAW_REPO (git url), HAW_DB (db name),
+# HAW_NOTES_DIR, HAW_SEED_NOTES=N, HAW_PREPARE_ONLY=1 (no agent/service changes).
 set -euo pipefail
 
 REPO="${HAW_REPO:-https://github.com/petrludwig-collab/HumanAgentWiki.git}"
@@ -24,14 +25,14 @@ step() { printf "\n${B}${C}==>${X} ${B}%s${X}\n" "$*"; }
 # No tty (CI / headless) -> return the default, so non-interactive installs still work.
 ask() {  # $1=prompt  $2=default  -> echoes the answer
   local a=""
-  if [ -e /dev/tty ]; then printf "%s" "$1" >/dev/tty; IFS= read -r a </dev/tty || a=""; fi
+  if ( : </dev/tty ) 2>/dev/null; then printf "%s" "$1" >/dev/tty; IFS= read -r a </dev/tty || a=""; fi
   printf "%s" "${a:-$2}"
 }
 lc() { printf "%s" "$1" | tr "[:upper:]" "[:lower:]"; }
 # Read a secret from /dev/tty without echoing it; show one '*' per character (with backspace).
 ask_secret() {  # $1=prompt  -> echoes the typed secret
   local prompt="$1" pw="" ch
-  [ -e /dev/tty ] || { printf ""; return; }
+  ( : </dev/tty ) 2>/dev/null || { printf ""; return; }
   printf "%s" "$prompt" >/dev/tty
   while IFS= read -rsn1 ch </dev/tty; do
     [ -z "$ch" ] && break                                   # Enter -> done
@@ -190,8 +191,12 @@ fi
 
 # For a local/native Postgres: give this OS user a role + the database (peer auth on the socket).
 if pg_ready && [ "$DB_URL" = "dbname=$DB" ]; then
-  sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$USER'" 2>/dev/null | grep -q 1 \
-    || sudo -u postgres createuser -s "$USER" 2>/dev/null || true
+  # Homebrew initdb creates the role for its unprivileged owner; there is no
+  # Linux 'postgres' OS account and no reason to request elevated privileges.
+  if [ "$(uname -s)" != "Darwin" ]; then
+    sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$USER'" 2>/dev/null | grep -q 1 \
+      || sudo -u postgres createuser -s "$USER" 2>/dev/null || true
+  fi
   createdb "$DB" 2>/dev/null || true
   .venv/bin/python -c "import psycopg; psycopg.connect('dbname=$DB').close()" 2>/dev/null \
     && ok "database '$DB' ready" || warn "could not connect to '$DB' yet"
@@ -204,7 +209,13 @@ tmp="$(mktemp)"; sed "s#^DATABASE_URL=.*#DATABASE_URL=$DB_URL#" .env > "$tmp" &&
 # Pick the embedding model by available RAM. BGE-M3 is excellent for Czech but needs ~2.3 GB to
 # load (and serve + web each load a copy). On small servers fall back to a light multilingual
 # model (still handles Czech + 100 languages) that loads in a fraction of the RAM.
-RAM_MB="$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')"; RAM_MB="${RAM_MB:-0}"
+RAM_MB=0
+if [ "$(uname -s)" = "Darwin" ]; then
+  RAM_MB="$(( $(sysctl -n hw.memsize) / 1024 / 1024 ))"
+else
+  RAM_MB="$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')"
+fi
+RAM_MB="${RAM_MB:-0}"
 if [ "$RAM_MB" -lt 6000 ]; then
   EMB_MODEL="intfloat/multilingual-e5-small"; EMB_DIM="384"
   warn "small server (${RAM_MB} MB RAM) - using a lighter multilingual model (e5-small, 384d)"
@@ -222,8 +233,12 @@ ok "wrote .env"
 chmod +x haw 2>/dev/null || true
 
 # 5b) swap — safety net so the embedding model loads when free RAM is tight --
-SWAP_KB="$(free -k 2>/dev/null | awk '/^Swap:/{print $2}')"; SWAP_KB="${SWAP_KB:-0}"
-if [ "$SWAP_KB" -eq 0 ] && [ "$RAM_MB" -lt 8000 ] && [ ! -e /swapfile ] && command -v sudo >/dev/null; then
+SWAP_KB=0
+if [ "$(uname -s)" = "Linux" ]; then
+  SWAP_KB="$(free -k 2>/dev/null | awk '/^Swap:/{print $2}')"
+fi
+SWAP_KB="${SWAP_KB:-0}"
+if [ "$(uname -s)" = "Linux" ] && [ "$SWAP_KB" -eq 0 ] && [ "$RAM_MB" -lt 8000 ] && [ ! -e /swapfile ] && command -v sudo >/dev/null; then
   step "Adding 4 GB swap (safety for model loading on a small server)"
   if { sudo fallocate -l 4G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none 2>/dev/null; } \
      && sudo chmod 600 /swapfile && sudo mkswap /swapfile >/dev/null 2>&1 && sudo swapon /swapfile 2>/dev/null; then
@@ -271,9 +286,9 @@ fi
 
 # 7) notes folder (empty, or seeded with bundled examples) ------------------
 step "Notes folder"
-NOTES_VAL="$DIR/notes"
+NOTES_VAL="${HAW_NOTES_DIR:-$DIR/notes}"
 mkdir -p "$NOTES_VAL"
-seed="$(ask "  Seed with the bundled example notes so the graph isn't empty? [Y/n]: " "Y")"
+seed="${HAW_SEED_NOTES:-$(ask "  Seed with the bundled example notes so the graph isn't empty? [Y/n]: " "Y")}"
 if [ "$(lc "$seed")" != "n" ] && [ -d "$DIR/sample_notes" ]; then
   cp -R "$DIR/sample_notes/." "$NOTES_VAL/" 2>/dev/null || true
   ok "seeded example notes -> notes/"
@@ -291,6 +306,14 @@ if command -v pg_isready >/dev/null && pg_isready -q 2>/dev/null \
   step "Indexing notes (first run loads the embedding model - be patient)"
   set -a; . ./.env; set +a
   .venv/bin/python cli.py index && ok "notes indexed"
+fi
+
+# Headless preparation stops before wiring/restarting ANY agent or web service.
+# Configure .env (bind addresses + auth) and an explicit supervisor afterwards.
+if [ "${HAW_PREPARE_ONLY:-0}" = "1" ]; then
+  chmod 600 .env
+  ok "Prepared $DIR; agents and services were not started or changed."
+  exit 0
 fi
 
 # 9) connect ALL this server's AI agents via MCP ----------------------------

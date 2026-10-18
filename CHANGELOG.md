@@ -37,7 +37,7 @@ improvements. Verified end-to-end on a clean Ubuntu 22.04.
 - **Runs on Python 3.9 again.** Replaced 3.10-only `X | None` annotations in `web.py` with
   `Optional[...]` so the web UI imports on 3.9 interpreters.
 
-## [1.0-mozek3] - 2026-06-18
+## [1.0.0] - 2026-06-18
 
 Initial engine: local hybrid semantic + keyword search over Markdown notes
 (PostgreSQL + pgvector + a multilingual embedder), an MCP server exposing

@@ -2,11 +2,13 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv-*
 venv/
 *.egg-info/
 
 # Env / secrets
 .env
+.env.bak-*
 *.local
 
 # Logs / state

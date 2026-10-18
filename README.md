@@ -42,6 +42,40 @@ It checks prerequisites, creates a virtualenv, installs dependencies, brings up 
 
 > Try it instantly with the bundled demo: `NOTES_DIR=./sample_notes ./haw index && ./haw web`
 
+### Headless macOS (Homebrew, no GUI login)
+
+Install `postgresql@17`, `pgvector` and a supported Python with Homebrew. Start your
+user-owned database cluster with `pg_ctl` (see `brew info postgresql@17` for its
+paths), add its `bin` directory to PATH, then run from this checkout:
+
+```bash
+HAW_DB=mywiki HAW_NOTES_DIR="$HOME/work/wiki" HAW_SEED_NOTES=N HAW_PREPARE_ONLY=1 ./install.sh
+```
+
+Preparation uses the normal installer but stops before configuring or restarting
+any agent/service. It never requests `sudo -u postgres` on macOS. Add your notes,
+run `./haw index` once to download the model, then set `HF_HUB_OFFLINE=1` and
+`TRANSFORMERS_OFFLINE=1` in `.env`. Keep `.env` mode 0600. Set `MCP_HOST=127.0.0.1`,
+`WEB_HOST` to the intended private interface (or explicitly `0.0.0.0` for LAN + VPN),
+and a strong `WEB_AUTH=user:password`.
+The built-in web authentication is HTTP Basic; use an encrypted private network
+or TLS reverse proxy. Do not expose unauthenticated Postgres on the network.
+
+For headless boot persistence use both `@reboot` and a once-per-minute user cron
+entry calling the absolute venv Python path, absolute `headless.py` path, and
+`--pg-bin /absolute/postgres/bin --pg-data /absolute/cluster`. The keeper starts
+PostgreSQL first, then MCP/web; it takes a process lock, checks PID identities,
+and leaves running processes alone. Logs and PID files are in ignored `state/`.
+It does not replace a health/selftest check or continuously index edited files:
+after external Markdown edits run `./haw index`. Web edits index immediately.
+Configure MCP in the intended agent only; restart that agent separately when safe.
+On macOS with Application Firewall, the actual Python.app must be allowed for
+inbound connections; testing loopback alone does not prove LAN/VPN access. If
+changing Python versions, create a matching virtualenv (never reuse another
+Python minor version's compiled dependencies).
+For a deliberately empty wiki use `./haw selftest --allow-empty`; this only allows
+zero chunks if there are also zero Markdown files, and still checks registry sync.
+
 ## How it works (plain English)
 
 1. Your notes are **Markdown files**, linked like a wiki with `[[links]]`.
@@ -109,6 +143,13 @@ pytest        # unit tests for the pure helpers (no DB needed)
 ## On the roadmap
 
 See [ROADMAP.md](ROADMAP.md).
+
+## Agentsmon monitoring
+
+An optional read-only service-card plugin checks authenticated web access, MCP,
+PostgreSQL, indexed-note counts and the existing recovery keeper. It reuses
+Agentsmon's uptime and 90-day history without changing its core. See
+[monitoring/README.md](monitoring/README.md) for setup and evidence limits.
 
 ## License
 

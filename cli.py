@@ -52,9 +52,9 @@ def cmd_web(args):
     uvicorn.run("web:app", host=WEB_HOST, port=port)
 
 
-def cmd_selftest(_):
+def cmd_selftest(args):
     import selftest
-    sys.exit(selftest.run())
+    sys.exit(selftest.run(allow_empty=args.allow_empty))
 
 
 def main():
@@ -65,7 +65,9 @@ def main():
     ps = sub.add_parser("search"); ps.add_argument("query"); ps.add_argument("-k", type=int, default=8); ps.set_defaults(fn=cmd_search)
     sub.add_parser("serve").set_defaults(fn=cmd_serve)
     pw = sub.add_parser("web"); pw.add_argument("--port", type=int, default=None); pw.set_defaults(fn=cmd_web)
-    sub.add_parser("selftest").set_defaults(fn=cmd_selftest)
+    pt = sub.add_parser("selftest")
+    pt.add_argument("--allow-empty", action="store_true", help="accept an intentionally empty wiki")
+    pt.set_defaults(fn=cmd_selftest)
     args = p.parse_args()
     args.fn(args)
 
