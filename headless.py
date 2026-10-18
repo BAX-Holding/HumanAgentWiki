@@ -9,7 +9,6 @@ import fcntl
 import os
 from pathlib import Path
 import subprocess
-import sys
 
 
 def environment(root):

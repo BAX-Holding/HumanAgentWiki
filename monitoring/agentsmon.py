@@ -6,7 +6,7 @@ belongs exclusively to the installation's existing keeper, never this probe.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import timezone
 import http.client
 import ipaddress
 import json

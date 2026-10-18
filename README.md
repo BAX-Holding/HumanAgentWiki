@@ -8,7 +8,7 @@
 
 ## What it is
 
-HumanAgentWiki turns *your own notes* (plain Markdown) into a shared, searchable knowledge base that any **MCP-compatible AI agent** can plug into. Everything runs **locally on your machine** — your knowledge never leaves your computer.
+HumanAgentWiki turns *your own notes* (plain Markdown) into a shared, searchable knowledge base that any **MCP-compatible AI agent** can plug into. Storage, indexing and retrieval run **locally on your machine**. A connected agent may send retrieved passages to its model provider; configure its permissions and data policy accordingly.
 
 ## Why
 
@@ -34,6 +34,14 @@ cd HumanAgentWiki && ./install.sh
 
 It checks prerequisites, creates a virtualenv, installs dependencies, brings up PostgreSQL (Docker if available, otherwise a local instance), writes `.env`, and creates the schema. Then use the `./haw` launcher:
 
+For updates, pull the reviewed version and re-run `./install.sh`. An existing
+`.env` preserves your database, model, notes and web authentication. The installer
+then stops before changing agents or services: restart **only this wiki** through
+your supervisor when idle. Back up the database and configuration before upgrades.
+A mismatched embedding dimension is a migration requiring explicit operator action;
+the installer never deletes index tables to resolve it. `.env` values are literal
+`KEY=value` data (no shell expansion or surrounding shell quotes).
+
 ```bash
 ./haw index     # index your notes (Markdown under ./notes)
 ./haw web       # web UI at http://127.0.0.1:8808
@@ -53,8 +61,9 @@ HAW_DB=mywiki HAW_NOTES_DIR="$HOME/work/wiki" HAW_SEED_NOTES=N HAW_PREPARE_ONLY=
 ```
 
 Preparation uses the normal installer but stops before configuring or restarting
-any agent/service. It never requests `sudo -u postgres` on macOS. Add your notes,
-run `./haw index` once to download the model, then set `HF_HUB_OFFLINE=1` and
+any agent/service. It never requests `sudo -u postgres` on macOS. Index your notes
+with `./haw index`. Prefetch the model with the read-only query `./haw search "warmup"`
+(also works when the wiki is empty), then set `HF_HUB_OFFLINE=1` and
 `TRANSFORMERS_OFFLINE=1` in `.env`. Keep `.env` mode 0600. Set `MCP_HOST=127.0.0.1`,
 `WEB_HOST` to the intended private interface (or explicitly `0.0.0.0` for LAN + VPN),
 and a strong `WEB_AUTH=user:password`.
@@ -94,27 +103,28 @@ You define your top-level **categories right in the app** (add/remove with +/–
 # 1. Start PostgreSQL + pgvector
 docker compose up -d
 
-# 2. Install dependencies (a virtualenv is recommended)
-pip install -r requirements.txt
+# 2. Create the virtualenv used by the ./haw launcher
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 
 # 3. Configure (copy and edit if needed)
-cp .env.example .env && set -a && . ./.env && set +a
+cp .env.example .env
 
 # 4. Create the schema
-python cli.py init-db
+./haw init-db
 
 # 5. Index your notes  (put Markdown in ./notes — folders are categories;
 #    or try the bundled demo:)
-NOTES_DIR=./sample_notes python cli.py index
+NOTES_DIR=./sample_notes ./haw index
 
 # 6. Search from the terminal…
-NOTES_DIR=./sample_notes python cli.py search "how do small habits compound"
+NOTES_DIR=./sample_notes ./haw search "how do small habits compound"
 
 # 7. …or run the MCP server for your agents
-python cli.py serve
+./haw serve
 
 # 8. …or open the web UI (manage categories, write/link notes, search)
-python cli.py web      # then open http://127.0.0.1:8808
+./haw web      # then open http://127.0.0.1:8808
 ```
 
 Then point any MCP client at `http://127.0.0.1:8802/mcp`. For Claude Code:

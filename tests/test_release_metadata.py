@@ -1,6 +1,8 @@
 """Public changelog releases use generic stable semantic versions."""
 from pathlib import Path
 import re
+import subprocess
+import sys
 
 
 def test_changelog_release_headers():
@@ -8,3 +10,5 @@ def test_changelog_release_headers():
     versions = re.findall(r'^## \[([^\]]+)\]', text, re.MULTILINE)
     assert versions
     assert all(v == 'Unreleased' or re.fullmatch(r'\d+\.\d+\.\d+', v) for v in versions)
+    output = subprocess.check_output([sys.executable, str(Path(__file__).resolve().parents[1]/'cli.py'), '--version'], text=True)
+    assert versions[0] in output
