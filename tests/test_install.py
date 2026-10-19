@@ -2,12 +2,17 @@
 import os
 from pathlib import Path
 import subprocess
+import pytest
 
 INSTALL = Path(__file__).resolve().parents[1] / "install.sh"
 
 
 def section(start, end):
-    return INSTALL.read_text().split(start, 1)[1].split(end, 1)[0]
+    _, found_start, rest = INSTALL.read_text().partition(start)
+    body, found_end, _ = rest.partition(end)
+    if not found_start or not found_end:
+        raise ValueError('Missing installer section boundary')
+    return body
 
 
 def shell(code, tmp_path):
@@ -56,8 +61,7 @@ def test_macos_native_database_never_uses_sudo(tmp_path):
 
 def test_prepare_only_exits_before_any_agent_or_service_change(tmp_path):
     # Run the guard immediately preceding the agent-configuration section.
-    full = INSTALL.read_text()
-    guard = full.split("# 9) connect", 1)[0].rsplit("# Headless preparation", 1)[-1]
+    guard = section("# Headless preparation", "# 9) connect")
     assert "HAW_PREPARE_ONLY" in guard
     guard = "# Headless preparation" + guard
     (tmp_path / ".env").write_text("fixture")
@@ -135,6 +139,15 @@ def test_shell_fixture_cannot_use_the_real_home_or_remote(tmp_path):
     assert result.returncode == 0
     assert result.stdout.splitlines() == [str(tmp_path), str(tmp_path / 'fixture-checkout'),
                                           str(tmp_path / 'missing-repository')]
+
+
+@pytest.mark.parametrize('content', ['end marker only', 'start marker only'])
+def test_section_rejects_either_missing_boundary(tmp_path, monkeypatch, content):
+    fixture = tmp_path / 'installer.sh'
+    fixture.write_text(content)
+    monkeypatch.setitem(globals(), 'INSTALL', fixture)
+    with pytest.raises(ValueError, match='Missing installer section boundary'):
+        section('start marker', 'end marker')
 
 
 def test_configuration_writer_preserves_special_characters(tmp_path):
