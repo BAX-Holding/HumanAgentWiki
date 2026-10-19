@@ -4,6 +4,24 @@ All notable changes to HumanAgentWiki are recorded here. Format based on
 [Keep a Changelog](https://keepachangelog.com/), and this project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-10-18
+
+### Added
+- Unprivileged headless macOS keeper with explicit database paths, UTF-8 locale,
+  authenticated non-loopback web access and loopback-only MCP.
+- Generic read-only Agentsmon service module with bounded HTTP/MCP/database
+  checks, explicit empty-wiki policy and idempotent configuration registration.
+- `selftest --allow-empty` for intentionally empty wikis without hiding unindexed notes.
+- `HAW_PREPARE_ONLY=1` and explicit note-directory/seed options for supervised installs.
+
+### Fixed
+- Re-running the installer preserves the database, embedding model and notes;
+  dimension mismatch stops without deleting existing index tables.
+- Configuration values are read as data, not executed as shell commands.
+- Existing installations stop before agent/service changes and request a scoped
+  supervisor restart; new installations never kill other wiki processes by name.
+- Generic English release documentation and monitoring messages.
+
 ## [1.1.0] - 2026-08-19
 
 Fresh-install fixes reported by the community, plus several retrieval and graph
@@ -37,7 +55,7 @@ improvements. Verified end-to-end on a clean Ubuntu 22.04.
 - **Runs on Python 3.9 again.** Replaced 3.10-only `X | None` annotations in `web.py` with
   `Optional[...]` so the web UI imports on 3.9 interpreters.
 
-## [1.0-mozek3] - 2026-06-18
+## [1.0.0] - 2026-06-18
 
 Initial engine: local hybrid semantic + keyword search over Markdown notes
 (PostgreSQL + pgvector + a multilingual embedder), an MCP server exposing

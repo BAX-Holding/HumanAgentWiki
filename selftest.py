@@ -26,9 +26,11 @@ def c_extensions():
     miss = {"vector", "pg_trgm", "unaccent"} - ext
     return (not miss), ("present" if not miss else f"MISSING: {miss}")
 
-def c_rowcount():
+def c_rowcount(allow_empty=False):
     conn = connect(); cur = conn.cursor()
     cur.execute("SELECT count(*) FROM chunks"); n = cur.fetchone()[0]; conn.close()
+    if n == 0 and allow_empty and not index.list_files():
+        return True, "empty wiki explicitly allowed (no Markdown files on disk)"
     return (n > 0), f"{n} chunks (run `cli.py index` if 0)"
 
 def c_no_null_embedding():
@@ -88,8 +90,11 @@ CHECKS = [
 ]
 
 
-def run():
+def run(allow_empty=False):
+    RESULTS.clear()
     for name, fn in CHECKS:
+        if fn is c_rowcount and allow_empty:
+            name, fn = "Chunk count (empty wiki allowed)", lambda: c_rowcount(allow_empty=True)
         check(name, fn)
     failed = [r for r in RESULTS if not r[1]]
     print(f"=== HumanAgentWiki selftest {datetime.datetime.now():%Y-%m-%d %H:%M} ===")

@@ -2,11 +2,15 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv-*
 venv/
 *.egg-info/
 
 # Env / secrets
 .env
+.env.bak-*
+# Interrupted atomic configuration writes can contain credentials.
+.env.??????
 *.local
 
 # Logs / state

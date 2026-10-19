@@ -1,0 +1,10 @@
+{
+  "web_url": "http://127.0.0.1:8808/",
+  "mcp_url": "http://127.0.0.1:8802/mcp",
+  "database": "humanagentwiki",
+  "db_socket": "/tmp",
+  "db_port": 5432,
+  "allow_empty": false,
+  "keeper_marker": "/path/to/HumanAgentWiki/headless.py",
+  "timeout_seconds": 3
+}

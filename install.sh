@@ -4,7 +4,8 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/petrludwig-collab/HumanAgentWiki/main/install.sh | bash
 #
-# Overridable via env: HAW_DIR (install path), HAW_REPO (git url), HAW_DB (db name).
+# Overridable via env: HAW_DIR (install path), HAW_REPO (git url), HAW_DB (db name),
+# HAW_NOTES_DIR, HAW_SEED_NOTES=N, HAW_PREPARE_ONLY=1 (no agent/service changes).
 set -euo pipefail
 
 REPO="${HAW_REPO:-https://github.com/petrludwig-collab/HumanAgentWiki.git}"
@@ -24,14 +25,39 @@ step() { printf "\n${B}${C}==>${X} ${B}%s${X}\n" "$*"; }
 # No tty (CI / headless) -> return the default, so non-interactive installs still work.
 ask() {  # $1=prompt  $2=default  -> echoes the answer
   local a=""
-  if [ -e /dev/tty ]; then printf "%s" "$1" >/dev/tty; IFS= read -r a </dev/tty || a=""; fi
+  if ( : </dev/tty ) 2>/dev/null; then printf "%s" "$1" >/dev/tty; IFS= read -r a </dev/tty || a=""; fi
   printf "%s" "${a:-$2}"
 }
 lc() { printf "%s" "$1" | tr "[:upper:]" "[:lower:]"; }
+load_env() {
+  # .env stores literal KEY=value data, never shell code (including passwords).
+  [ -f .env ] || return 0
+  local line key
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue ;; esac
+    key="${line%%=*}"
+    [[ "$line" = *=* && "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+    export "$line"
+  done < .env
+}
+# End environment loader
+write_env() {
+  # Atomic literal replacement: passwords/paths can contain sed metacharacters.
+  local key="$1" value="$2" line tmp found=0
+  tmp="$(mktemp .env.XXXXXX)"
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [[ "$line" = "$key="* ]]; then
+      printf '%s=%s\n' "$key" "$value" >> "$tmp"; found=1
+    else printf '%s\n' "$line" >> "$tmp"; fi
+  done < .env
+  [ "$found" = 1 ] || printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  chmod 600 "$tmp"; mv "$tmp" .env
+}
+# End configuration writer
 # Read a secret from /dev/tty without echoing it; show one '*' per character (with backspace).
 ask_secret() {  # $1=prompt  -> echoes the typed secret
   local prompt="$1" pw="" ch
-  [ -e /dev/tty ] || { printf ""; return; }
+  ( : </dev/tty ) 2>/dev/null || { printf ""; return; }
   printf "%s" "$prompt" >/dev/tty
   while IFS= read -rsn1 ch </dev/tty; do
     [ -z "$ch" ] && break                                   # Enter -> done
@@ -78,6 +104,11 @@ else
   git clone -q "$REPO" "$DIR"; ok "cloned into $DIR"
 fi
 cd "$DIR"
+EXISTING_CONFIG=0
+if [ -f .env ]; then
+  EXISTING_CONFIG=1
+  load_env || die "Invalid .env: use literal KEY=value lines"
+fi
 
 # 3) python environment -----------------------------------------------------
 step "Installing Python dependencies (first run downloads PyTorch - be patient)"
@@ -130,9 +161,11 @@ ok "dependencies installed"
 
 # 4) database (Postgres + pgvector) -----------------------------------------
 step "Setting up PostgreSQL (pgvector)"
-DB_URL="dbname=$DB"
+DB_URL="${DATABASE_URL:-dbname=$DB}"
 pg_ready() { command -v pg_isready >/dev/null 2>&1 && pg_isready -q 2>/dev/null; }
-if command -v docker >/dev/null && docker info >/dev/null 2>&1 && [ -f docker-compose.yml ]; then
+if [ -n "${DATABASE_URL:-}" ]; then
+  ok "preserving the configured database connection"
+elif command -v docker >/dev/null && docker info >/dev/null 2>&1 && [ -f docker-compose.yml ]; then
   docker compose up -d >/dev/null 2>&1 || sudo docker compose up -d >/dev/null 2>&1 || true
   DB_URL="dbname=humanagentwiki user=humanagentwiki password=humanagentwiki host=localhost port=5432"
   for _ in $(seq 1 30); do
@@ -190,8 +223,12 @@ fi
 
 # For a local/native Postgres: give this OS user a role + the database (peer auth on the socket).
 if pg_ready && [ "$DB_URL" = "dbname=$DB" ]; then
-  sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$USER'" 2>/dev/null | grep -q 1 \
-    || sudo -u postgres createuser -s "$USER" 2>/dev/null || true
+  # Homebrew initdb creates the role for its unprivileged owner; there is no
+  # Linux 'postgres' OS account and no reason to request elevated privileges.
+  if [ "$(uname -s)" != "Darwin" ]; then
+    sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$USER'" 2>/dev/null | grep -q 1 \
+      || sudo -u postgres createuser -s "$USER" 2>/dev/null || true
+  fi
   createdb "$DB" 2>/dev/null || true
   .venv/bin/python -c "import psycopg; psycopg.connect('dbname=$DB').close()" 2>/dev/null \
     && ok "database '$DB' ready" || warn "could not connect to '$DB' yet"
@@ -200,12 +237,23 @@ fi
 # 5) configuration: DB url + RAM-adaptive embedding model -------------------
 step "Writing configuration"
 [ -f .env ] || cp .env.example .env
-tmp="$(mktemp)"; sed "s#^DATABASE_URL=.*#DATABASE_URL=$DB_URL#" .env > "$tmp" && mv "$tmp" .env
+if [ "$EXISTING_CONFIG" = 0 ]; then
+  write_env DATABASE_URL "$DB_URL"
+fi
 # Pick the embedding model by available RAM. BGE-M3 is excellent for Czech but needs ~2.3 GB to
 # load (and serve + web each load a copy). On small servers fall back to a light multilingual
 # model (still handles Czech + 100 languages) that loads in a fraction of the RAM.
-RAM_MB="$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')"; RAM_MB="${RAM_MB:-0}"
-if [ "$RAM_MB" -lt 6000 ]; then
+RAM_MB=0
+if [ "$(uname -s)" = "Darwin" ]; then
+  RAM_MB="$(( $(sysctl -n hw.memsize) / 1024 / 1024 ))"
+else
+  RAM_MB="$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')"
+fi
+RAM_MB="${RAM_MB:-0}"
+if [ "${EXISTING_CONFIG:-0}" = 1 ] && [ -n "${EMBED_MODEL:-}" ] && [ -n "${EMBED_DIM:-}" ]; then
+  EMB_MODEL="$EMBED_MODEL"; EMB_DIM="$EMBED_DIM"
+  ok "preserving the configured embedding model and dimension"
+elif [ "$RAM_MB" -lt 6000 ]; then
   EMB_MODEL="intfloat/multilingual-e5-small"; EMB_DIM="384"
   warn "small server (${RAM_MB} MB RAM) - using a lighter multilingual model (e5-small, 384d)"
 else
@@ -213,17 +261,18 @@ else
   ok "using BGE-M3 (server has ${RAM_MB} MB RAM)"
 fi
 for kv in "EMBED_MODEL=$EMB_MODEL" "EMBED_DIM=$EMB_DIM"; do
-  k="${kv%%=*}"
-  if grep -q "^${k}=" .env 2>/dev/null; then
-    tmp="$(mktemp)"; sed "s#^${k}=.*#${kv}#" .env > "$tmp" && mv "$tmp" .env
-  else echo "$kv" >> .env; fi
+  write_env "${kv%%=*}" "${kv#*=}"
 done
 ok "wrote .env"
 chmod +x haw 2>/dev/null || true
 
 # 5b) swap — safety net so the embedding model loads when free RAM is tight --
-SWAP_KB="$(free -k 2>/dev/null | awk '/^Swap:/{print $2}')"; SWAP_KB="${SWAP_KB:-0}"
-if [ "$SWAP_KB" -eq 0 ] && [ "$RAM_MB" -lt 8000 ] && [ ! -e /swapfile ] && command -v sudo >/dev/null; then
+SWAP_KB=0
+if [ "$(uname -s)" = "Linux" ]; then
+  SWAP_KB="$(free -k 2>/dev/null | awk '/^Swap:/{print $2}')"
+fi
+SWAP_KB="${SWAP_KB:-0}"
+if [ "$(uname -s)" = "Linux" ] && [ "$SWAP_KB" -eq 0 ] && [ "$RAM_MB" -lt 8000 ] && [ ! -e /swapfile ] && command -v sudo >/dev/null; then
   step "Adding 4 GB swap (safety for model loading on a small server)"
   if { sudo fallocate -l 4G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none 2>/dev/null; } \
      && sudo chmod 600 /swapfile && sudo mkswap /swapfile >/dev/null 2>&1 && sudo swapon /swapfile 2>/dev/null; then
@@ -236,9 +285,8 @@ fi
 if command -v pg_isready >/dev/null && pg_isready -q 2>/dev/null \
    || { command -v docker >/dev/null && docker info >/dev/null 2>&1; }; then
   step "Creating database schema"
-  set -a; . ./.env; set +a
-  # If a chunks table already exists with a different vector dimension (model changed), drop it
-  # so the schema is recreated for the new dim. The index step repopulates from your notes.
+  load_env || die "Invalid .env"
+  # A model migration must be explicit; never destroy an existing index on re-run.
   CUR_DIM="$(.venv/bin/python - <<'PY' 2>/dev/null
 import os, psycopg
 try:
@@ -251,8 +299,7 @@ except Exception:
 PY
 )"
   if [ -n "$CUR_DIM" ] && [ "$CUR_DIM" != "${EMBED_DIM:-1024}" ]; then
-    warn "embedding dimension changed ($CUR_DIM -> ${EMBED_DIM}) - recreating schema"
-    .venv/bin/python -c "import os,psycopg;c=psycopg.connect(os.environ['DATABASE_URL']);cur=c.cursor();cur.execute('DROP TABLE IF EXISTS chunks CASCADE');cur.execute('DROP TABLE IF EXISTS files CASCADE');c.commit()" 2>/dev/null || true
+    die "Embedding dimension mismatch ($CUR_DIM -> ${EMBED_DIM}). Restore the original model/dimension in .env or back up the database and perform an explicit migration. No tables were deleted."
   fi
   if .venv/bin/python cli.py init-db; then
     ok "schema ready"
@@ -271,9 +318,11 @@ fi
 
 # 7) notes folder (empty, or seeded with bundled examples) ------------------
 step "Notes folder"
-NOTES_VAL="$DIR/notes"
+NOTES_VAL="${HAW_NOTES_DIR:-${NOTES_DIR:-$DIR/notes}}"
 mkdir -p "$NOTES_VAL"
-seed="$(ask "  Seed with the bundled example notes so the graph isn't empty? [Y/n]: " "Y")"
+seed_default=Y
+[ "$EXISTING_CONFIG" = 0 ] || seed_default=N
+seed="${HAW_SEED_NOTES:-$(ask "  Seed with bundled example notes? [y/n]: " "$seed_default")}"
 if [ "$(lc "$seed")" != "n" ] && [ -d "$DIR/sample_notes" ]; then
   cp -R "$DIR/sample_notes/." "$NOTES_VAL/" 2>/dev/null || true
   ok "seeded example notes -> notes/"
@@ -281,21 +330,30 @@ else
   ok "empty notes/ folder (drop your Markdown here)"
 fi
 [ -d "$NOTES_VAL/.git" ] || git -C "$NOTES_VAL" init -q 2>/dev/null || true
-if grep -q '^NOTES_DIR=' .env 2>/dev/null; then
-  tmp="$(mktemp)"; sed "s#^NOTES_DIR=.*#NOTES_DIR=$NOTES_VAL#" .env > "$tmp" && mv "$tmp" .env
-else echo "NOTES_DIR=$NOTES_VAL" >> .env; fi
+write_env NOTES_DIR "$NOTES_VAL"
 
 # 8) index the notes --------------------------------------------------------
 if command -v pg_isready >/dev/null && pg_isready -q 2>/dev/null \
    || { command -v docker >/dev/null && docker info >/dev/null 2>&1; }; then
   step "Indexing notes (first run loads the embedding model - be patient)"
-  set -a; . ./.env; set +a
-  .venv/bin/python cli.py index && ok "notes indexed"
+  load_env || die "Invalid .env"
+  .venv/bin/python cli.py index || die "Indexing failed; check the error above before starting services"
+  ok "notes indexed"
+fi
+
+# Headless preparation stops before wiring/restarting ANY agent or web service.
+# Configure .env (bind addresses + auth) and an explicit supervisor afterwards.
+if [ "${HAW_PREPARE_ONLY:-0}" = "1" ] || [ "$EXISTING_CONFIG" = 1 ]; then
+  chmod 600 .env
+  ok "Prepared $DIR; agents and services were not started or changed."
+  ok "For an existing installation, restart only this wiki through its supervisor when safe."
+  exit 0
 fi
 
 # 9) connect ALL this server's AI agents via MCP ----------------------------
 step "Connect AI agents (MCP)"
-MCP_PORT_VAL="$( ( set -a; . ./.env 2>/dev/null; set +a; echo "${MCP_PORT:-8802}" ) )"
+load_env || die "Invalid .env"
+MCP_PORT_VAL="${MCP_PORT:-8802}"
 MCP_URL="http://127.0.0.1:${MCP_PORT_VAL}/mcp"
 NAME="${HAW_MCP_NAME:-humanagentwiki}"
 wire="$(ask "  Point ALL AI agents on this server (Claude / Codex / Hermes / OpenClaw) at the wiki? [Y/n]: " "Y")"
@@ -343,13 +401,15 @@ fi
 
 # 10) network reach: localhost only, or visible from outside ----------------
 step "Web UI access"
-WEB_PORT_VAL="$( ( set -a; . ./.env 2>/dev/null; set +a; echo "${WEB_PORT:-8808}" ) )"
+WEB_PORT_VAL="${WEB_PORT:-8808}"
 echo "  The web UI is always reachable on this machine (http://127.0.0.1:$WEB_PORT_VAL)."
+if [ "$EXISTING_CONFIG" = 1 ]; then
+  WEB_HOST_VAL="${WEB_HOST:-127.0.0.1}"
+  ok "preserving web bind and authentication from .env"
+else
 vis="$(ask "  Also make it visible from outside - the server's IP / the internet? [y/N]: " "N")"
 if [ "$(lc "$vis")" = "y" ]; then WEB_HOST_VAL="0.0.0.0"; else WEB_HOST_VAL="127.0.0.1"; fi
-if grep -q '^WEB_HOST=' .env 2>/dev/null; then
-  tmp="$(mktemp)"; sed "s#^WEB_HOST=.*#WEB_HOST=$WEB_HOST_VAL#" .env > "$tmp" && mv "$tmp" .env
-else echo "WEB_HOST=$WEB_HOST_VAL" >> .env; fi
+write_env WEB_HOST "$WEB_HOST_VAL"
 if [ "$WEB_HOST_VAL" = "0.0.0.0" ]; then warn "visible from outside - set a password below (strongly recommended)"
 else ok "kept private (127.0.0.1 only)"; fi
 
@@ -363,9 +423,7 @@ if [ "$(lc "$want")" = "y" ]; then
   p="$(ask_secret "    password: ")"
   if [ -n "$u" ] && [ -n "$p" ]; then
     cred="$u:$p"
-    if grep -q '^WEB_AUTH=' .env 2>/dev/null; then
-      tmp="$(mktemp)"; sed "s#^WEB_AUTH=.*#WEB_AUTH=$cred#" .env > "$tmp" && mv "$tmp" .env
-    else echo "WEB_AUTH=$cred" >> .env; fi
+    write_env WEB_AUTH "$cred"
     ok "web UI protected (login: $u / password hidden)"
   else warn "username or password empty - left open"; fi
 else
@@ -375,32 +433,29 @@ else
   fi
   warn "web UI left open (no password)"
 fi
+fi  # Preserve existing web authentication on unattended re-runs.
 chmod 600 .env 2>/dev/null || true
 
 # 12) (re)start it so the CURRENT config (model, host, auth) actually applies -
 step "Starting HumanAgentWiki"
-# Always restart: a running server still holds the OLD env (e.g. a previous password), so a
-# re-run must kill + relaunch, not skip, or config changes silently don't take effect.
-pkill -f "cli.py serve" 2>/dev/null || true
-pkill -f "cli.py web"   2>/dev/null || true
-# Wait until the old processes are really gone so their ports are free — a too-short sleep let the
-# new web hit "address already in use" and exit immediately.
-for _ in $(seq 1 15); do
-  if pgrep -f "cli.py serve" >/dev/null 2>&1 || pgrep -f "cli.py web" >/dev/null 2>&1; then sleep 1; else break; fi
-done
+# First installation only. Existing instances stop before this section. Never
+# use broad process-name kills: another checkout may serve a different wiki.
 # Re-load .env so the FINAL config (WEB_HOST / WEB_AUTH chosen by the prompts above) is in the
 # environment the servers inherit. An earlier `set -a; . ./.env` baked stale defaults (notably
 # WEB_HOST=127.0.0.1) into this shell; since ./haw only sets vars NOT already in the environment,
 # that stale value would otherwise shadow the updated file and the web would bind to localhost
 # even when the user chose "visible from outside".
-set -a; . ./.env; set +a
-( nohup ./haw serve >/tmp/haw-serve.log 2>&1 </dev/null & disown ) 2>/dev/null || true
-( nohup ./haw web   >/tmp/haw-web.log   2>&1 </dev/null & disown ) 2>/dev/null || true
+load_env || die "Invalid .env"
+mkdir -p state
+nohup .venv/bin/python "$DIR/cli.py" serve >state/serve.log 2>&1 </dev/null &
+serve_pid=$!; printf '%s\n' "$serve_pid" >state/serve.pid
+nohup .venv/bin/python "$DIR/cli.py" web >state/web.log 2>&1 </dev/null &
+web_pid=$!; printf '%s\n' "$web_pid" >state/web.pid
 sleep 3
-if pgrep -f "cli.py web" >/dev/null 2>&1; then
-  ok "MCP server + web UI (re)started (logs: /tmp/haw-serve.log, /tmp/haw-web.log)"
+if kill -0 "$serve_pid" 2>/dev/null && kill -0 "$web_pid" 2>/dev/null; then
+  ok "MCP/web processes started; model warmup may take longer (logs: $DIR/state/)"
 else
-  warn "web didn't stay up - check /tmp/haw-web.log, then: cd $DIR && nohup ./haw web >/tmp/haw-web.log 2>&1 &"
+  die "A wiki process exited. Check $DIR/state/serve.log and web.log; no other instance was stopped."
 fi
 # Reload running agents so they pick up the wiki MCP now (they only read MCP at startup).
 if [ "${any:-0}" = 1 ]; then
