@@ -16,7 +16,10 @@ def shell(code, tmp_path):
         code = 'write_env() {' + section('write_env() {', '# End configuration writer') + '\n' + code
     return subprocess.run(["/bin/bash", "-c", "set -euo pipefail\n" + code],
                           cwd=tmp_path, capture_output=True, text=True,
-                          start_new_session=True, env={**os.environ, "USER": "fixture"})
+                          start_new_session=True, timeout=10,
+                          env={**os.environ, "USER": "fixture", "HOME": str(tmp_path),
+                               "HAW_DIR": str(tmp_path / "fixture-checkout"),
+                               "HAW_REPO": str(tmp_path / "missing-repository")})
 
 
 def test_macos_model_selection_without_free(tmp_path):
@@ -118,12 +121,20 @@ def test_installer_env_loader_does_not_execute_values(tmp_path):
 
 
 def test_update_exits_before_agent_or_service_changes(tmp_path):
-    guard = '# Headless preparation' + INSTALL.read_text().split('# 9) connect',1)[0].rsplit('# Headless preparation',1)[-1]
+    # Missing delimiters must fail before executing any installer section.
+    guard = '# Headless preparation' + section('# Headless preparation', '# 9) connect')
     (tmp_path/'.env').write_text('WEB_AUTH=reader:synthetic\n')
     result = shell('EXISTING_CONFIG=1; DIR=/fixture; ok(){ :; };\n'+guard+'\ntouch restarted',tmp_path)
     assert result.returncode == 0, result.stderr
     assert not (tmp_path/'restarted').exists()
     assert 'pkill -f' not in INSTALL.read_text()
+
+
+def test_shell_fixture_cannot_use_the_real_home_or_remote(tmp_path):
+    result = shell('printf "%s\\n" "$HOME" "$HAW_DIR" "$HAW_REPO"', tmp_path)
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == [str(tmp_path), str(tmp_path / 'fixture-checkout'),
+                                          str(tmp_path / 'missing-repository')]
 
 
 def test_configuration_writer_preserves_special_characters(tmp_path):
