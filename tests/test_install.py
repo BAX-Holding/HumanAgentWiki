@@ -288,3 +288,34 @@ def test_keeper_restarts_agents_after_boot_once_the_mcp_answers(tmp_path):
         for svc in ('serve', 'web'):
             pid = (work / 'state' / f'{svc}.pid').read_text().strip()
             subprocess.run(['kill', pid])
+
+
+def _wait_for_mcp_fn():
+    return 'wait_for_mcp() {' + section('wait_for_mcp() {', '\nload_env() {') + '\n'
+
+
+def test_mcp_wait_stops_when_the_server_process_exited(tmp_path):
+    (tmp_path / 'serve.pid').write_text('999999\n')   # no such process
+    import time
+    began = time.time()
+    result = shell(_wait_for_mcp_fn() + 'if wait_for_mcp http://127.0.0.1:9/mcp 60 serve.pid; '
+                   'then echo READY; else echo GAVE_UP; fi', tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert 'GAVE_UP' in result.stdout and 'process exited' in result.stdout
+    assert time.time() - began < 5
+
+
+def test_keeper_is_installed_before_agents_wait_for_the_mcp():
+    text = INSTALL.read_text()
+    assert text.index('# Keep MCP + web running after a reboot') < text.index('# Reload running agents')
+
+
+def test_cpu_torch_index_only_on_linux_without_gpu():
+    block = section('TORCH_INDEX=()', '.venv/bin/python -m pip install --progress-bar')
+    assert 'nvidia-smi' in block and 'download.pytorch.org/whl/cpu' in block
+    assert 'PIP_EXTRA_INDEX_URL' in block
+
+
+def test_failed_swap_does_not_leave_the_file():
+    block = section('step "Adding 4 GB swap', '# 6) schema')
+    assert 'rm -f /swapfile' in block.split('else', 1)[1]

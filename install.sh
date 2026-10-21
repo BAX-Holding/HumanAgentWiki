@@ -30,10 +30,15 @@ ask() {  # $1=prompt  $2=default  -> echoes the answer
 }
 lc() { printf "%s" "$1" | tr "[:upper:]" "[:lower:]"; }
 # Poll the MCP endpoint with a real `initialize` until it answers (HTTP 200) or the timeout ends.
-wait_for_mcp() {  # $1=url  $2=timeout seconds
-  local end=$(( $(date +%s) + ${2:-300} )) code
+wait_for_mcp() {  # $1=url  $2=timeout seconds  $3=optional pid file of the server process
+  local end=$(( $(date +%s) + ${2:-300} )) code pid
   printf "  waiting for the wiki MCP to answer (first start loads the model)"
   while [ "$(date +%s)" -lt "$end" ]; do
+    # No point waiting minutes for a server that already exited (e.g. killed for lack of memory).
+    if [ -n "${3:-}" ]; then
+      pid="$(cat "$3" 2>/dev/null || true)"
+      if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then printf " - the MCP process exited\n"; return 1; fi
+    fi
     code="$(curl -s -o /dev/null -m 5 -w '%{http_code}' -X POST "$1" \
       -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
       -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"haw-install","version":"1"}}}' 2>/dev/null || true)"
@@ -156,7 +161,14 @@ PIPLOG="$(mktemp)"
 # `</dev/null` also matters under `curl | bash`: a backgrounded job otherwise inherits the
 # script-pipe as stdin and drains it, making bash hit EOF and stop.
 set +e +o pipefail
-.venv/bin/python -m pip install --progress-bar on -r requirements.txt >"$PIPLOG" 2>&1 </dev/null &
+# Linux without an NVIDIA GPU: the default PyPI torch pulls several GB of CUDA libraries it can
+# never use. The CPU index has the same torch without them (an explicit PIP_* setting wins).
+TORCH_INDEX=()
+if [ "$(uname -s)" = "Linux" ] && ! command -v nvidia-smi >/dev/null 2>&1 \
+   && [ -z "${PIP_INDEX_URL:-}${PIP_EXTRA_INDEX_URL:-}" ]; then
+  TORCH_INDEX=(--extra-index-url https://download.pytorch.org/whl/cpu)
+fi
+.venv/bin/python -m pip install --progress-bar on ${TORCH_INDEX[@]+"${TORCH_INDEX[@]}"} -r requirements.txt >"$PIPLOG" 2>&1 </dev/null &
 pip_pid=$!
 secs=0
 while kill -0 "$pip_pid" 2>/dev/null; do
@@ -291,7 +303,11 @@ if [ "$(uname -s)" = "Linux" ] && [ "$SWAP_KB" -eq 0 ] && [ "$RAM_MB" -lt 8000 ]
      && sudo chmod 600 /swapfile && sudo mkswap /swapfile >/dev/null 2>&1 && sudo swapon /swapfile 2>/dev/null; then
     grep -q '/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
     ok "4 GB swap active (survives reboot)"
-  else warn "could not add swap (continuing anyway)"; fi
+  else
+    # It did not exist before this step: do not leave a 4 GB file behind (e.g. LXC/OpenVZ VPS).
+    sudo swapoff /swapfile 2>/dev/null || true; sudo rm -f /swapfile 2>/dev/null || true
+    warn "could not add swap (continuing anyway)"
+  fi
 fi
 
 # 6) schema -----------------------------------------------------------------
@@ -467,37 +483,6 @@ if kill -0 "$serve_pid" 2>/dev/null && kill -0 "$web_pid" 2>/dev/null; then
 else
   die "A wiki process exited. Check $DIR/state/serve.log and web.log; no other instance was stopped."
 fi
-# Reload running agents so they pick up the wiki MCP now (they only read MCP at startup).
-if [ "${any:-0}" = 1 ]; then
-  step "Reloading running agents so they see the wiki"
-  # Gateways: clean restart. setsid detaches from this terminal (no foreground hijack) and from
-  # this script's process group (survives our exit); a supervisor reconciles to one instance.
-  if command -v setsid >/dev/null 2>&1; then
-    command -v hermes   >/dev/null 2>&1 && { setsid hermes gateway restart   </dev/null >/dev/null 2>&1 & ok "Hermes gateway reloaded"; }
-    command -v openclaw >/dev/null 2>&1 && { setsid openclaw gateway restart </dev/null >/dev/null 2>&1 & ok "OpenClaw gateway reloaded"; }
-  fi
-  # Codex/Claude have no hot-reload and no gateway. A blind kill took an agent down with no
-  # respawn, so only a supervisor that owns them restarts them: Agents Monitoring (0.3.11+)
-  # resumes the same conversation. An agent reads its MCP list once at start, so wait until the
-  # wiki MCP actually answers (first start downloads the model) - an earlier restart sees nothing.
-  if command -v agentsmon >/dev/null 2>&1 && agentsmon restart --help >/dev/null 2>&1 \
-     && { command -v codex >/dev/null 2>&1 || command -v claude >/dev/null 2>&1; }; then
-    reload="$(ask "  Restart running Codex / Claude agents so they load the wiki (same conversation)? [Y/n]: " "Y")"
-    if [ "$(lc "$reload")" != "n" ]; then
-      if wait_for_mcp "$MCP_URL" "${HAW_MCP_WAIT:-300}"; then
-        if agentsmon restart --all </dev/null; then ok "running agents restarted - the wiki is available to them"
-        else warn "some agents did not restart - use the restart button in the Agents Monitoring dashboard"; fi
-      else
-        warn "MCP not answering yet (see $DIR/state/serve.log) - restart Codex/Claude once it does: agentsmon restart --all"
-      fi
-    else
-      warn "Codex/Claude: restart them later to load the wiki: agentsmon restart --all"
-    fi
-  else
-    command -v codex  >/dev/null 2>&1 && warn "Codex: restart its session to load the wiki (new sessions already have it)"
-    command -v claude >/dev/null 2>&1 && warn "Claude: restart its session to load the wiki (new sessions already have it)"
-  fi
-fi
 # Keep MCP + web running after a reboot (Linux: user crontab, no root). Without it the agents
 # lose the wiki at the next server restart while everything else comes back.
 if [ "$(uname -s)" = "Linux" ] && command -v crontab >/dev/null 2>&1; then
@@ -534,7 +519,7 @@ KEEP
     { crontab -l 2>/dev/null | grep -v '# humanagentwiki-keep$' || true
       printf '@reboot /bin/bash %s/state/keep.sh # humanagentwiki-keep\n' "$DIR"
       printf '* * * * * /bin/bash %s/state/keep.sh # humanagentwiki-keep\n' "$DIR"; } | crontab - \
-      && ok "wiki starts automatically after a reboot (crontab, checked every minute)" \
+      && { keeper_on=1; ok "wiki starts automatically after a reboot (crontab, checked every minute)"; } \
       || warn "could not write the crontab - add $DIR/state/keep.sh to your boot/supervisor"
   else
     warn "for persistence after reboot, add './haw serve' and './haw web' to your boot/supervisor"
@@ -543,6 +528,39 @@ else
   warn "for persistence after reboot, add './haw serve' and './haw web' to your boot/supervisor"
 fi
 
+# Reload running agents so they pick up the wiki MCP now (they only read MCP at startup).
+if [ "${any:-0}" = 1 ]; then
+  step "Reloading running agents so they see the wiki"
+  # Gateways: clean restart. setsid detaches from this terminal (no foreground hijack) and from
+  # this script's process group (survives our exit); a supervisor reconciles to one instance.
+  if command -v setsid >/dev/null 2>&1; then
+    command -v hermes   >/dev/null 2>&1 && { setsid hermes gateway restart   </dev/null >/dev/null 2>&1 & ok "Hermes gateway reloaded"; }
+    command -v openclaw >/dev/null 2>&1 && { setsid openclaw gateway restart </dev/null >/dev/null 2>&1 & ok "OpenClaw gateway reloaded"; }
+  fi
+  # Codex/Claude have no hot-reload and no gateway. A blind kill took an agent down with no
+  # respawn, so only a supervisor that owns them restarts them: Agents Monitoring (0.3.11+)
+  # resumes the same conversation. An agent reads its MCP list once at start, so wait until the
+  # wiki MCP actually answers (first start downloads the model) - an earlier restart sees nothing.
+  if command -v agentsmon >/dev/null 2>&1 && agentsmon restart --help >/dev/null 2>&1 \
+     && { command -v codex >/dev/null 2>&1 || command -v claude >/dev/null 2>&1; }; then
+    reload="$(ask "  Restart running Codex / Claude agents so they load the wiki (same conversation)? [Y/n]: " "Y")"
+    if [ "$(lc "$reload")" != "n" ]; then
+      # With the keeper in cron a crashed server comes back within a minute: keep waiting then.
+      watch="state/serve.pid"; [ "${keeper_on:-0}" = 1 ] && watch=""
+      if wait_for_mcp "$MCP_URL" "${HAW_MCP_WAIT:-300}" "$watch"; then
+        if agentsmon restart --all </dev/null; then ok "running agents restarted - the wiki is available to them"
+        else warn "some agents did not restart - use the restart button in the Agents Monitoring dashboard"; fi
+      else
+        warn "MCP not answering yet (see $DIR/state/serve.log) - restart Codex/Claude once it does: agentsmon restart --all"
+      fi
+    else
+      warn "Codex/Claude: restart them later to load the wiki: agentsmon restart --all"
+    fi
+  else
+    command -v codex  >/dev/null 2>&1 && warn "Codex: restart its session to load the wiki (new sessions already have it)"
+    command -v claude >/dev/null 2>&1 && warn "Claude: restart its session to load the wiki (new sessions already have it)"
+  fi
+fi
 # done + link ---------------------------------------------------------------
 PRIMARY_IP="$(.venv/bin/python - <<'PYIP'
 import socket

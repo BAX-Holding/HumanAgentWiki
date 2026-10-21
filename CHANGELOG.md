@@ -4,6 +4,16 @@ All notable changes to HumanAgentWiki are recorded here. Format based on
 [Keep a Changelog](https://keepachangelog.com/), and this project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.4] - 2026-10-21
+
+### Fixed
+- Linux without an NVIDIA GPU installs the CPU build of PyTorch instead of several GB of CUDA
+  libraries it can never use (an explicit `PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL` still wins).
+- A failed `swapon` (e.g. on LXC/OpenVZ hosts) no longer leaves a 4 GB `/swapfile` behind.
+- If the MCP server exits during model warmup, the installer stops waiting at once instead of
+  after 5 minutes. The reboot keeper is now written before that wait, so a crash during the
+  first start is retried by cron.
+
 ## [1.2.3] - 2026-10-21
 
 ### Fixed
