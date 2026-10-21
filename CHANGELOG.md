@@ -4,6 +4,13 @@ All notable changes to HumanAgentWiki are recorded here. Format based on
 [Keep a Changelog](https://keepachangelog.com/), and this project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.3] - 2026-10-21
+
+### Fixed
+- After a reboot the agents start before the wiki MCP has loaded and would run without the
+  wiki until their next restart. The Linux keeper now waits until the MCP answers and then
+  restarts running agents through Agents Monitoring (only right after boot, never mid-day).
+
 ## [1.2.2] - 2026-10-21
 
 ### Fixed

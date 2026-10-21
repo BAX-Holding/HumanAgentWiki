@@ -234,7 +234,7 @@ def test_reboot_keeper_starts_missing_servers_once(tmp_path):
     fake.chmod(0o755)
     helpers = ('ok() { echo "OK $*"; }\nwarn() { echo "WARN $*"; }\n'
                'ask() { printf "%s" "$2"; }\nlc() { printf "%s" "$1" | tr "[:upper:]" "[:lower:]"; }\n'
-               'uname() { echo Linux; }\n' f'DIR={work}\ncd {work}\n')
+               'uname() { echo Linux; }\n' f'DIR={work}\nMCP_URL=http://127.0.0.1:8802/mcp\ncd {work}\n')
     start = '# Keep MCP + web running after a reboot'
     block = start + section(start, '# done + link')
     result = shell(f'export PATH="{bin_dir}:$PATH"\n' + helpers + block + '\ncrontab -l\n', tmp_path)
@@ -245,6 +245,45 @@ def test_reboot_keeper_starts_missing_servers_once(tmp_path):
             subprocess.run(['/bin/bash', str(work / 'state' / 'keep.sh')], check=True, timeout=10)
             import time; time.sleep(0.5)
         assert sorted(starts.read_text().split()) == ['serve', 'web']
+    finally:
+        for svc in ('serve', 'web'):
+            pid = (work / 'state' / f'{svc}.pid').read_text().strip()
+            subprocess.run(['kill', pid])
+
+
+def test_keeper_restarts_agents_after_boot_once_the_mcp_answers(tmp_path):
+    work = tmp_path / 'wiki'
+    (work / 'state').mkdir(parents=True)
+    haw = work / 'haw'
+    haw.write_text('#!/bin/bash\nexec sleep 30\n')
+    haw.chmod(0o755)
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    calls = tmp_path / 'agentsmon.log'
+    for name, body in (('agentsmon', f'echo "$*" >> {calls}'), ('curl', 'printf 200'),
+                       ('crontab', 'cat >/dev/null')):
+        tool = bin_dir / name
+        tool.write_text(f'#!/bin/bash\n{body}\n')
+        tool.chmod(0o755)
+    helpers = ('ok() { :; }\nwarn() { :; }\nask() { printf "%s" "$2"; }\n'
+               'lc() { printf "%s" "$1" | tr "[:upper:]" "[:lower:]"; }\nuname() { echo Linux; }\n'
+               f'DIR={work}\nMCP_URL=http://127.0.0.1:8802/mcp\ncd {work}\n')
+    start = '# Keep MCP + web running after a reboot'
+    block = start + section(start, '# done + link')
+    assert shell(f'export PATH="{bin_dir}:$PATH"\n' + helpers + block, tmp_path).returncode == 0
+    env = {**os.environ, 'PATH': f'{bin_dir}:' + os.environ['PATH'], 'HAW_UPTIME': '60'}
+    try:
+        subprocess.run(['/bin/bash', str(work / 'state' / 'keep.sh')], check=True, timeout=10, env=env)
+        import time
+        for _ in range(50):
+            if calls.exists() and 'restart --all' in calls.read_text():
+                break
+            time.sleep(0.1)
+        assert 'restart --all' in calls.read_text()
+        calls.write_text('')
+        subprocess.run(['/bin/bash', str(work / 'state' / 'keep.sh')], check=True, timeout=10, env=env)
+        time.sleep(1)
+        assert 'restart --all' not in calls.read_text()   # servers already up: no restart
     finally:
         for svc in ('serve', 'web'):
             pid = (work / 'state' / f'{svc}.pid').read_text().strip()
