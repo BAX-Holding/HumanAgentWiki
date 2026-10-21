@@ -4,6 +4,15 @@ All notable changes to HumanAgentWiki are recorded here. Format based on
 [Keep a Changelog](https://keepachangelog.com/), and this project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.2] - 2026-10-21
+
+### Fixed
+- Running Codex / Claude Code agents are restarted only after the wiki MCP answers a real
+  `initialize` request. 1.2.1 restarted them before the MCP server was even started, so they
+  came back without the wiki.
+- On Linux the installer can keep MCP and web running after a reboot (user crontab, checked
+  every minute, no root). Before, the wiki silently stopped at the next server restart.
+
 ## [1.2.1] - 2026-10-21
 
 ### Changed

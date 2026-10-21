@@ -29,6 +29,19 @@ ask() {  # $1=prompt  $2=default  -> echoes the answer
   printf "%s" "${a:-$2}"
 }
 lc() { printf "%s" "$1" | tr "[:upper:]" "[:lower:]"; }
+# Poll the MCP endpoint with a real `initialize` until it answers (HTTP 200) or the timeout ends.
+wait_for_mcp() {  # $1=url  $2=timeout seconds
+  local end=$(( $(date +%s) + ${2:-300} )) code
+  printf "  waiting for the wiki MCP to answer (first start loads the model)"
+  while [ "$(date +%s)" -lt "$end" ]; do
+    code="$(curl -s -o /dev/null -m 5 -w '%{http_code}' -X POST "$1" \
+      -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+      -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"haw-install","version":"1"}}}' 2>/dev/null || true)"
+    if [ "$code" = "200" ]; then printf " - ready\n"; return 0; fi
+    printf "."; sleep 3
+  done
+  printf "\n"; return 1
+}
 load_env() {
   # .env stores literal KEY=value data, never shell code (including passwords).
   [ -f .env ] || return 0
@@ -390,20 +403,7 @@ if [ "$(lc "$wire")" != "n" ]; then
   fi
   if [ "$any" = 1 ]; then
     ok "agents can use: brain_search / brain_get / brain_neighbors"
-    # Gateway-type agents (Hermes/OpenClaw) are reloaded in step 12. Codex/Claude are interactive
-    # REPL sessions: Agents Monitoring (0.3.11+) can restart them, resuming the same conversation.
-    if command -v agentsmon >/dev/null && agentsmon restart --help >/dev/null 2>&1; then
-      reload="$(ask "  Restart running Codex / Claude agents now so they load the wiki (same conversation)? [Y/n]: " "Y")"
-      if [ "$(lc "$reload")" != "n" ]; then
-        if agentsmon restart --all </dev/null; then ok "running agents restarted - the wiki is available to them"
-        else warn "some agents did not restart - use the restart button in the Agents Monitoring dashboard"; fi
-      else
-        warn "Codex/Claude: restart running sessions later to load the wiki (new sessions get it automatically)"
-      fi
-    else
-      command -v codex  >/dev/null && warn "Codex: restart a running session to load the wiki (new sessions get it automatically)"
-      command -v claude >/dev/null && warn "Claude: restart a running session to load the wiki (new sessions get it automatically)"
-    fi
+    # Running agents are reloaded after the MCP server is up and answering (step 12).
   else warn "no agent CLI found on PATH - register $MCP_URL manually in each agent"; fi
 else
   warn "agents not wired - the MCP endpoint is $MCP_URL"
@@ -476,13 +476,56 @@ if [ "${any:-0}" = 1 ]; then
     command -v hermes   >/dev/null 2>&1 && { setsid hermes gateway restart   </dev/null >/dev/null 2>&1 & ok "Hermes gateway reloaded"; }
     command -v openclaw >/dev/null 2>&1 && { setsid openclaw gateway restart </dev/null >/dev/null 2>&1 & ok "OpenClaw gateway reloaded"; }
   fi
-  # Codex/Claude have no hot-reload and no gateway. We deliberately DON'T kill them: a blind kill
-  # took an agent down with no respawn (supervisors vary / may not own it). They load the wiki on
-  # their next restart — which the user's supervisor or the user does.
-  command -v codex  >/dev/null 2>&1 && warn "Codex: restart its session to load the wiki (new sessions already have it)"
-  command -v claude >/dev/null 2>&1 && warn "Claude: restart its session to load the wiki (new sessions already have it)"
+  # Codex/Claude have no hot-reload and no gateway. A blind kill took an agent down with no
+  # respawn, so only a supervisor that owns them restarts them: Agents Monitoring (0.3.11+)
+  # resumes the same conversation. An agent reads its MCP list once at start, so wait until the
+  # wiki MCP actually answers (first start downloads the model) - an earlier restart sees nothing.
+  if command -v agentsmon >/dev/null 2>&1 && agentsmon restart --help >/dev/null 2>&1 \
+     && { command -v codex >/dev/null 2>&1 || command -v claude >/dev/null 2>&1; }; then
+    reload="$(ask "  Restart running Codex / Claude agents so they load the wiki (same conversation)? [Y/n]: " "Y")"
+    if [ "$(lc "$reload")" != "n" ]; then
+      if wait_for_mcp "$MCP_URL" "${HAW_MCP_WAIT:-300}"; then
+        if agentsmon restart --all </dev/null; then ok "running agents restarted - the wiki is available to them"
+        else warn "some agents did not restart - use the restart button in the Agents Monitoring dashboard"; fi
+      else
+        warn "MCP not answering yet (see $DIR/state/serve.log) - restart Codex/Claude once it does: agentsmon restart --all"
+      fi
+    else
+      warn "Codex/Claude: restart them later to load the wiki: agentsmon restart --all"
+    fi
+  else
+    command -v codex  >/dev/null 2>&1 && warn "Codex: restart its session to load the wiki (new sessions already have it)"
+    command -v claude >/dev/null 2>&1 && warn "Claude: restart its session to load the wiki (new sessions already have it)"
+  fi
 fi
-warn "for persistence after reboot, add './haw serve' and './haw web' to your boot/supervisor"
+# Keep MCP + web running after a reboot (Linux: user crontab, no root). Without it the agents
+# lose the wiki at the next server restart while everything else comes back.
+if [ "$(uname -s)" = "Linux" ] && command -v crontab >/dev/null 2>&1; then
+  keep="$(ask "  Start the wiki automatically after a reboot (user crontab)? [Y/n]: " "Y")"
+  if [ "$(lc "$keep")" != "n" ]; then
+    cat >state/keep.sh <<KEEP
+#!/usr/bin/env bash
+# Generated by install.sh: start MCP/web if they are not running (cron @reboot + every minute).
+cd "$DIR" || exit 0
+for svc in serve web; do
+  pid="\$(cat "state/\$svc.pid" 2>/dev/null)"
+  if [ -n "\$pid" ] && kill -0 "\$pid" 2>/dev/null; then continue; fi
+  nohup ./haw "\$svc" >>"state/\$svc.log" 2>&1 </dev/null &
+  echo \$! >"state/\$svc.pid"
+done
+KEEP
+    chmod 700 state/keep.sh
+    { crontab -l 2>/dev/null | grep -v '# humanagentwiki-keep$' || true
+      printf '@reboot /bin/bash %s/state/keep.sh # humanagentwiki-keep\n' "$DIR"
+      printf '* * * * * /bin/bash %s/state/keep.sh # humanagentwiki-keep\n' "$DIR"; } | crontab - \
+      && ok "wiki starts automatically after a reboot (crontab, checked every minute)" \
+      || warn "could not write the crontab - add $DIR/state/keep.sh to your boot/supervisor"
+  else
+    warn "for persistence after reboot, add './haw serve' and './haw web' to your boot/supervisor"
+  fi
+else
+  warn "for persistence after reboot, add './haw serve' and './haw web' to your boot/supervisor"
+fi
 
 # done + link ---------------------------------------------------------------
 PRIMARY_IP="$(.venv/bin/python - <<'PYIP'

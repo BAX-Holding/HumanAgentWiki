@@ -186,19 +186,66 @@ def test_interrupted_configuration_temp_cannot_be_added_to_git(tmp_path):
     assert example.returncode==1
 
 
-def test_running_agents_are_restarted_through_agents_monitoring(tmp_path):
-    """After wiring MCP, running Codex/Claude reload it via `agentsmon restart --all`."""
+
+def _restart_block(tmp_path, mcp_ready):
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     log = tmp_path / 'calls.log'
-    fake = bin_dir / 'agentsmon'
-    fake.write_text(f'#!/bin/bash\necho "$*" >> {log}\nexit 0\n')
-    fake.chmod(0o755)
+    for name, body in (('agentsmon', f'echo "$*" >> {log}'), ('codex', 'true')):
+        tool = bin_dir / name
+        tool.write_text(f'#!/bin/bash\n{body}\nexit 0\n')
+        tool.chmod(0o755)
     helpers = ('ok() { echo "OK $*"; }\nwarn() { echo "WARN $*"; }\n'
-               'ask() { printf "%s" "$2"; }\nlc() { printf "%s" "$1" | tr "[:upper:]" "[:lower:]"; }\n')
-    start = '    if command -v agentsmon >/dev/null'
-    block = start + section(start, '  else warn "no agent CLI found')
+               'ask() { printf "%s" "$2"; }\nlc() { printf "%s" "$1" | tr "[:upper:]" "[:lower:]"; }\n'
+               f'wait_for_mcp() {{ echo "wait $1" >> {log}; return {0 if mcp_ready else 1}; }}\n'
+               'MCP_URL=http://127.0.0.1:8802/mcp\nDIR=/fixture\n')
+    start = '  if command -v agentsmon >/dev/null 2>&1 && agentsmon restart --help'
+    block = start + section(start, 'warn "Claude: restart its session to load the wiki (new sessions already have it)"\n  fi')
+    block += 'warn "Claude: restart its session to load the wiki (new sessions already have it)"\n  fi\n'
     result = shell(f'export PATH="{bin_dir}:$PATH"\n' + helpers + block, tmp_path)
     assert result.returncode == 0, result.stderr
-    assert log.read_text().splitlines() == ['restart --help', 'restart --all']
-    assert 'running agents restarted' in result.stdout
+    return log.read_text().splitlines(), result.stdout
+
+
+def test_agents_restart_only_after_the_mcp_answers(tmp_path):
+    calls, out = _restart_block(tmp_path, mcp_ready=True)
+    assert calls == ['restart --help', 'wait http://127.0.0.1:8802/mcp', 'restart --all']
+    assert 'running agents restarted' in out
+
+
+def test_no_restart_while_the_mcp_is_still_down(tmp_path):
+    calls, out = _restart_block(tmp_path, mcp_ready=False)
+    assert 'restart --all' not in calls
+    assert 'MCP not answering yet' in out
+
+
+def test_reboot_keeper_starts_missing_servers_once(tmp_path):
+    work = tmp_path / 'wiki'
+    (work / 'state').mkdir(parents=True)
+    starts = tmp_path / 'starts.log'
+    haw = work / 'haw'
+    haw.write_text(f'#!/bin/bash\necho "$1" >> {starts}\nexec sleep 30\n')
+    haw.chmod(0o755)
+    cron = tmp_path / 'crontab.txt'
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    fake = bin_dir / 'crontab'
+    fake.write_text(f'#!/bin/bash\nif [ "$1" = "-l" ]; then cat {cron} 2>/dev/null; else cat > {cron}; fi\n')
+    fake.chmod(0o755)
+    helpers = ('ok() { echo "OK $*"; }\nwarn() { echo "WARN $*"; }\n'
+               'ask() { printf "%s" "$2"; }\nlc() { printf "%s" "$1" | tr "[:upper:]" "[:lower:]"; }\n'
+               'uname() { echo Linux; }\n' f'DIR={work}\ncd {work}\n')
+    start = '# Keep MCP + web running after a reboot'
+    block = start + section(start, '# done + link')
+    result = shell(f'export PATH="{bin_dir}:$PATH"\n' + helpers + block + '\ncrontab -l\n', tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count('# humanagentwiki-keep') == 2
+    try:
+        for _ in range(2):   # second run must not start duplicates
+            subprocess.run(['/bin/bash', str(work / 'state' / 'keep.sh')], check=True, timeout=10)
+            import time; time.sleep(0.5)
+        assert sorted(starts.read_text().split()) == ['serve', 'web']
+    finally:
+        for svc in ('serve', 'web'):
+            pid = (work / 'state' / f'{svc}.pid').read_text().strip()
+            subprocess.run(['kill', pid])
