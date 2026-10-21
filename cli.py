@@ -59,7 +59,7 @@ def cmd_selftest(args):
 
 def main():
     p = argparse.ArgumentParser(prog="humanagentwiki")
-    p.add_argument('--version', action='version', version='HumanAgentWiki 1.2.0')
+    p.add_argument('--version', action='version', version='HumanAgentWiki 1.2.1')
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("init-db").set_defaults(fn=cmd_init_db)
     pi = sub.add_parser("index"); pi.add_argument("--full", action="store_true"); pi.set_defaults(fn=cmd_index)

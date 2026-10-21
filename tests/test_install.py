@@ -184,3 +184,21 @@ def test_interrupted_configuration_temp_cannot_be_added_to_git(tmp_path):
     assert result.returncode==0
     example=subprocess.run(['git','check-ignore','.env.example'],cwd=tmp_path,capture_output=True)
     assert example.returncode==1
+
+
+def test_running_agents_are_restarted_through_agents_monitoring(tmp_path):
+    """After wiring MCP, running Codex/Claude reload it via `agentsmon restart --all`."""
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    log = tmp_path / 'calls.log'
+    fake = bin_dir / 'agentsmon'
+    fake.write_text(f'#!/bin/bash\necho "$*" >> {log}\nexit 0\n')
+    fake.chmod(0o755)
+    helpers = ('ok() { echo "OK $*"; }\nwarn() { echo "WARN $*"; }\n'
+               'ask() { printf "%s" "$2"; }\nlc() { printf "%s" "$1" | tr "[:upper:]" "[:lower:]"; }\n')
+    start = '    if command -v agentsmon >/dev/null'
+    block = start + section(start, '  else warn "no agent CLI found')
+    result = shell(f'export PATH="{bin_dir}:$PATH"\n' + helpers + block, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert log.read_text().splitlines() == ['restart --help', 'restart --all']
+    assert 'running agents restarted' in result.stdout

@@ -4,6 +4,13 @@ All notable changes to HumanAgentWiki are recorded here. Format based on
 [Keep a Changelog](https://keepachangelog.com/), and this project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] - 2026-10-21
+
+### Changed
+- After wiring the MCP server, the installer offers to restart running Codex / Claude Code
+  agents through Agents Monitoring (`agentsmon restart --all`, 0.3.11+), resuming the same
+  conversation, so they load the wiki without a manual restart. Older setups keep the hint.
+
 ## [1.2.0] - 2026-10-18
 
 ### Added

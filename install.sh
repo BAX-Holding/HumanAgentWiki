@@ -391,9 +391,19 @@ if [ "$(lc "$wire")" != "n" ]; then
   if [ "$any" = 1 ]; then
     ok "agents can use: brain_search / brain_get / brain_neighbors"
     # Gateway-type agents (Hermes/OpenClaw) are reloaded in step 12. Codex/Claude are interactive
-    # REPL sessions we can't restart for you.
-    command -v codex  >/dev/null && warn "Codex: restart a running session to load the wiki (new sessions get it automatically)"
-    command -v claude >/dev/null && warn "Claude: restart a running session to load the wiki (new sessions get it automatically)"
+    # REPL sessions: Agents Monitoring (0.3.11+) can restart them, resuming the same conversation.
+    if command -v agentsmon >/dev/null && agentsmon restart --help >/dev/null 2>&1; then
+      reload="$(ask "  Restart running Codex / Claude agents now so they load the wiki (same conversation)? [Y/n]: " "Y")"
+      if [ "$(lc "$reload")" != "n" ]; then
+        if agentsmon restart --all </dev/null; then ok "running agents restarted - the wiki is available to them"
+        else warn "some agents did not restart - use the restart button in the Agents Monitoring dashboard"; fi
+      else
+        warn "Codex/Claude: restart running sessions later to load the wiki (new sessions get it automatically)"
+      fi
+    else
+      command -v codex  >/dev/null && warn "Codex: restart a running session to load the wiki (new sessions get it automatically)"
+      command -v claude >/dev/null && warn "Claude: restart a running session to load the wiki (new sessions get it automatically)"
+    fi
   else warn "no agent CLI found on PATH - register $MCP_URL manually in each agent"; fi
 else
   warn "agents not wired - the MCP endpoint is $MCP_URL"
