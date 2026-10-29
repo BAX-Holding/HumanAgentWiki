@@ -145,10 +145,21 @@ Tools exposed: `brain_search`, `brain_get`, `brain_neighbors`.
 
 ## Development
 
+The unit-test matrix covers Python 3.10–3.14 on Linux and macOS. It uses mocked
+database calls and local HTTP fixtures; no PostgreSQL service or embedding model
+is needed. Run the same checks in a clean virtual environment:
+
 ```bash
-pip install -r requirements-dev.txt
-pytest        # unit tests for the pure helpers (no DB needed)
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements-ci.txt
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python -m pytest -q
+python -m pyflakes *.py monitoring tests
+bash -n install.sh haw
 ```
+
+For model/database integration work, install `requirements-dev.txt` instead.
+The offline unit suite does not replace a live installation or `./haw selftest`.
 
 ## On the roadmap
 

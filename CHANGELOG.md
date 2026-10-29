@@ -4,6 +4,39 @@ All notable changes to HumanAgentWiki are recorded here. Format based on
 [Keep a Changelog](https://keepachangelog.com/), and this project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.4] - 2026-10-21
+
+### Fixed
+- Linux without an NVIDIA GPU installs the CPU build of PyTorch instead of several GB of CUDA
+  libraries it can never use (an explicit `PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL` still wins).
+- A failed `swapon` (e.g. on LXC/OpenVZ hosts) no longer leaves a 4 GB `/swapfile` behind.
+- If the MCP server exits during model warmup, the installer stops waiting at once instead of
+  after 5 minutes. The reboot keeper is now written before that wait, so a crash during the
+  first start is retried by cron.
+
+## [1.2.3] - 2026-10-21
+
+### Fixed
+- After a reboot the agents start before the wiki MCP has loaded and would run without the
+  wiki until their next restart. The Linux keeper now waits until the MCP answers and then
+  restarts running agents through Agents Monitoring (only right after boot, never mid-day).
+
+## [1.2.2] - 2026-10-21
+
+### Fixed
+- Running Codex / Claude Code agents are restarted only after the wiki MCP answers a real
+  `initialize` request. 1.2.1 restarted them before the MCP server was even started, so they
+  came back without the wiki.
+- On Linux the installer can keep MCP and web running after a reboot (user crontab, checked
+  every minute, no root). Before, the wiki silently stopped at the next server restart.
+
+## [1.2.1] - 2026-10-21
+
+### Changed
+- After wiring the MCP server, the installer offers to restart running Codex / Claude Code
+  agents through Agents Monitoring (`agentsmon restart --all`, 0.3.11+), resuming the same
+  conversation, so they load the wiki without a manual restart. Older setups keep the hint.
+
 ## [1.2.0] - 2026-10-18
 
 ### Added

@@ -1,0 +1,10 @@
+# Unit tests exercise pure helpers and mocked/local protocol boundaries.
+# Keep runtime bounds aligned with requirements.txt; embedding imports are lazy.
+# No torch, sentence-transformers, model download or running PostgreSQL needed.
+psycopg[binary]>=3.1
+pgvector>=0.2.5
+mcp>=1.2,<2
+fastapi>=0.110
+uvicorn>=0.29
+pytest>=8.0
+pyflakes>=3.2
